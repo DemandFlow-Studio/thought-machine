@@ -1,4 +1,4 @@
 
 document.addEventListener('DOMContentLoaded', function () {
-  alert('Thought Machine — Loaded');
+  console.log('Thought Machine — Loaded');
 });
