@@ -1,10 +1,11 @@
 import gsap from 'gsap';
 import { CustomEase } from 'gsap/CustomEase';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { SplitText } from 'gsap/all';
 import Lenis from 'lenis';
 import createGlobe from './lib/cobe-custom.js';
 
-gsap.registerPlugin(CustomEase, ScrollTrigger);
+gsap.registerPlugin(CustomEase, ScrollTrigger, SplitText);
 CustomEase.create('button-046-ease', '0.32, 0.72, 0, 1');
 
 // Top-level so it's accessible throughout the file
@@ -1260,17 +1261,769 @@ function initCobe() {
   requestAnimationFrame(render);
 }
 
+function initFOUC() {
+  const loadEls = document.querySelectorAll("[data-anim-load]");
+  loadEls.forEach((el) => {
+    if (el.hasAttribute("data-fouc-prevent")) {
+      return;
+    } else {
+      gsap.set(el, {
+        visibility: "visible",
+      });
+    }
+  });
+  ScrollTrigger.refresh();
+}
+
+function initTextSplit() {
+  const animMap = new WeakMap();
+
+  function handleSplit(el, self) {
+    const prev = animMap.get(el);
+    if (prev) prev.forEach((anim) => anim.kill());
+    animMap.set(el, []);
+
+    el.dispatchEvent(
+      new CustomEvent("splitReady", {
+        detail: {
+          lines: self.lines,
+          words: self.words,
+          chars: self.chars,
+          register(anim) {
+            animMap.get(el)?.push(anim);
+          },
+        },
+      })
+    );
+  }
+
+  const splitConfig = {
+    chars: {
+      type: "chars, lines",
+      mask: "chars",
+      charsClass: "char-mask",
+      linesClass: "line-mask",
+      autoSplit: true,
+    },
+    words: {
+      type: "words, lines",
+      mask: "lines",
+      wordsClass: "word-mask",
+      linesClass: "line-mask",
+      autoSplit: true,
+    },
+    lines: {
+      type: "lines",
+      mask: "lines",
+      linesClass: "line-mask",
+      autoSplit: true,
+    },
+    "rich-lines": {
+      type: "lines",
+      mask: "lines",
+      linesClass: "line-mask",
+      autoSplit: true,
+    },
+  };
+
+  Object.entries(splitConfig).forEach(([key, config]) => {
+    document.querySelectorAll(`[data-split="${key}"]`).forEach((el) => {
+      const target = key === "rich-lines" ? [...el.children] : el;
+
+      SplitText.create(target, {
+        ...config,
+        onSplit(self) {
+          handleSplit(el, self);
+        },
+      });
+    });
+  });
+}
+
+function initLoadAnimations() {
+  const globalLoadDelay = 0;
+    // Lines load animation
+  document.querySelectorAll("[data-anim-load=lines]").forEach((el) => {
+const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;    el.addEventListener("splitReady", (e) => {
+      const { lines, register } = e.detail;
+      if (!lines?.length) return;
+
+      const tween = gsap.from(lines, {
+        delay: globalLoadDelay + delay,
+        opacity: 0,
+        yPercent: 112,
+        duration: 1.125,
+        stagger: 0.075,
+        ease: "expo.out",
+      });
+      register(tween);
+    });
+  });
+
+  document.querySelectorAll("[data-anim-load=fade]").forEach((el) => {
+    const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;
+    gsap.from(el, {
+      opacity: 0,
+      duration: 1,
+      ease: "expo.out",
+      delay: globalLoadDelay + delay,
+    })
+  })
+
+  document.querySelectorAll("[data-anim-load=button]").forEach((el) => {
+    const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;
+    gsap.from(el, {
+      opacity: 0,
+      yPercent: 50,
+      duration: 1,
+      ease: "power3.out",
+      delay: globalLoadDelay + delay,
+    })
+  })
+
+  document.querySelectorAll("[data-anim-load=inset-section]").forEach((el) => {
+    const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;
+    gsap.fromTo(el, {
+            clipPath: "inset(0rem 0rem 0rem 0rem round 0rem)",
+
+    }, 
+      {
+      clipPath: "inset(0.5rem 0.5rem 0.5rem 0.5rem round 1rem)",
+      duration: 1.5,
+      ease: "power2.out",
+      delay: globalLoadDelay + delay,
+    })
+  })
+
+  document.querySelectorAll("[data-anim-load=children-fade]").forEach((el) => {
+    const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;
+    gsap.from(el.children, {
+      opacity: 0,
+      yPercent: 50,
+      duration: 1.5,
+      stagger: {
+        each: 0.075,
+      },
+      ease: "expo.out",
+      delay: globalLoadDelay + delay,
+    })
+  })
+
+  // Words load animation
+  document.querySelectorAll("[data-anim-load=words]").forEach((el) => {
+    const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;
+    el.addEventListener("splitReady", (e) => {
+      const { words, register } = e.detail;
+      if (!words?.length) return;
+
+      const tween = gsap.from(words, {
+        delay: globalLoadDelay + delay,
+        yPercent: 115,
+        duration: 1,
+        stagger: 0.075,
+        ease: "power3.out",
+      });
+      register(tween);
+    });
+  });
+}
+
+function initScrollAnimations() {
+
+    // Words scroll animation
+  document.querySelectorAll("[data-anim-scroll=words]").forEach((el) => {
+    el.addEventListener("splitReady", (e) => {
+      const { words, register } = e.detail;
+      if (!words?.length) return;
+
+      const tween = gsap.from(words, {
+        yPercent: 115,
+        duration: 1,
+        stagger: 0.075,
+        ease: "power3.out",
+                scrollTrigger: {
+          trigger: el,
+          start: "top bottom",
+          end: "top 80%",
+          toggleActions: "none play none reset",
+        },
+      });
+      register(tween);
+    });
+  });
+
+    document.querySelectorAll("[data-anim-scroll=lines]").forEach((el) => {
+el.addEventListener("splitReady", (e) => {
+      const { lines, register } = e.detail;
+      if (!lines?.length) return;
+
+      const tween = gsap.from(lines, {
+        opacity: 0,
+        yPercent: 112,
+        duration: 1.125,
+        stagger: 0.075,
+        ease: "expo.out",
+                        scrollTrigger: {
+          trigger: el,
+          start: "top bottom",
+          end: "top 80%",
+          toggleActions: "none play none reset",
+        },
+      });
+      register(tween);
+    });
+  });
+
+    document.querySelectorAll("[data-anim-scroll=children-slide-right-fade]").forEach((el) => {
+      const children = el.children;
+      const childTargets = el.querySelectorAll("[data-anim-target]");
+      const animTargets = childTargets ? childTargets : children;
+
+      gsap.from(children, {
+        opacity: 0,
+        duration: 1.66,
+        yPercent: 25,
+        ease: "expo.out",
+        stagger: {
+          each: 0.05,
+        },
+        scrollTrigger: {
+          trigger: el,
+          start: "top bottom",
+          end: "top 80%",
+          toggleActions: "none play none reset",
+        },
+      });
+  });
+
+    document.querySelectorAll("[data-anim-scroll=fade]").forEach((el) => {
+
+      gsap.from(el, {
+        opacity: 0,
+        duration: 1.66,
+        yPercent: 25,
+        ease: "expo.out",
+        scrollTrigger: {
+          trigger: el,
+          start: "top bottom",
+          end: "top 80%",
+          toggleActions: "none play none reset",
+        },
+      });
+  });
+}
+
+function initGlobalParallax() {
+  const mm = gsap.matchMedia()
+
+  mm.add(
+    {
+      isMobile: "(max-width:479px)",
+      isMobileLandscape: "(max-width:767px)",
+      isTablet: "(max-width:991px)",
+      isDesktop: "(min-width:992px)"
+    },
+    (context) => {
+      const { isMobile, isMobileLandscape, isTablet } = context.conditions
+
+      const ctx = gsap.context(() => {
+        document.querySelectorAll('[data-parallax="trigger"]').forEach((trigger) => {
+            // Check if this trigger has to be disabled on smaller breakpoints
+            const disable = trigger.getAttribute("data-parallax-disable")
+            if (
+              (disable === "mobile" && isMobile) ||
+              (disable === "mobileLandscape" && isMobileLandscape) ||
+              (disable === "tablet" && isTablet)
+            ) {
+              return
+            }
+            
+            // Optional: you can target an element inside a trigger if necessary 
+            const target = trigger.querySelector('[data-parallax="target"]') || trigger
+
+            // Get the direction value to decide between xPercent or yPercent tween
+            const direction = trigger.getAttribute("data-parallax-direction") || "vertical"
+            const prop = direction === "horizontal" ? "xPercent" : "yPercent"
+            
+            // Get the scrub value, our default is 'true' because that feels nice with Lenis
+            const scrubAttr = trigger.getAttribute("data-parallax-scrub")
+            const scrub = scrubAttr ? parseFloat(scrubAttr) : true
+            
+            // Get the start position in % 
+            const startAttr = trigger.getAttribute("data-parallax-start")
+            const startVal = startAttr !== null ? parseFloat(startAttr) : 20
+            
+            // Get the end position in %
+            const endAttr = trigger.getAttribute("data-parallax-end")
+            const endVal = endAttr !== null ? parseFloat(endAttr) : -20
+            
+            // Get the start value of the ScrollTrigger
+            const scrollStartRaw = trigger.getAttribute("data-parallax-scroll-start") || "top bottom"
+            const scrollStart = `clamp(${scrollStartRaw})`
+            
+           // Get the end value of the ScrollTrigger  
+            const scrollEndRaw = trigger.getAttribute("data-parallax-scroll-end") || "bottom top"
+            const scrollEnd = `clamp(${scrollEndRaw})`
+
+            gsap.fromTo(
+              target,
+              { [prop]: startVal },
+              {
+                [prop]: endVal,
+                ease: "none",
+                scrollTrigger: {
+                  trigger,
+                  start: scrollStart,
+                  end: scrollEnd,
+                  scrub,
+                },
+              }
+            )
+          })
+      })
+
+      return () => ctx.revert()
+    }
+  )
+    }
+	
+function initSwipers() {
+      $("[data-swiper=use-cases]").each(function() {
+        const swiperTarget = $(this)[0];
+        const swiperNext = $("[data-swiper-next=use-cases]")[0];
+        const swiperPrev = $("[data-swiper-prev=use-cases]")[0];
+
+        const swiper = new Swiper(swiperTarget, {
+          speed: 600,
+          spaceBetween: 24,
+          slidesPerView: "auto",
+          navigation: {
+            nextEl: swiperNext,
+            prevEl: swiperPrev,
+          },
+          mousewheel: {
+            forceToAxis: true,
+          },
+          a11y: {
+            enabled: true,
+            slideRole: 'listitem'
+          },
+        })
+      })
+    }
+
+    function initMouseMove() {
+  var MAX_REM = 10;
+  var maxPx =
+    MAX_REM * parseFloat(getComputedStyle(document.documentElement).fontSize);
+
+  // Bail on touch devices
+  if ("ontouchstart" in window) return;
+
+  var targets = [];
+
+  $("[data-mouse-move-strength]").each(function () {
+    var el = $(this)[0];
+    var strength = parseFloat($(this).attr("data-mouse-move-strength")) || 0;
+
+    targets.push({
+      strength: strength,
+      xTo: gsap.quickTo(el, "x", { duration: 1.5, ease: "power3" }),
+      yTo: gsap.quickTo(el, "y", { duration: 1.5, ease: "power3" }),
+    });
+  });
+
+  if (!targets.length) return;
+
+  $(window).on("mousemove", function (e) {
+    // -1 … 1 from viewport center
+    var nx = (e.clientX / window.innerWidth - 0.5) * 2;
+    var ny = (e.clientY / window.innerHeight - 0.5) * 2;
+
+    targets.forEach(function (t) {
+      t.xTo(nx * -maxPx * t.strength);
+      t.yTo(ny * -maxPx * t.strength);
+    });
+  });
+}
+
+// Resource
+function initNumberOdometer() {
+  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  const initFlag = 'data-odometer-initialized'
+  const activeTweens = new WeakMap()
+
+  // Configuration
+  const defaults = {
+    duration: 2,
+    ease: 'power3.out',
+    elementStagger: 0.05,
+    digitStagger: 0.04,
+    revealDuration: 1,
+    revealEase: 'power2.out',
+    triggerStart: 'top 90%',
+    staggerOrder: 'left',
+    digitCycles: 2
+  }
+
+  // Scroll-triggered groups
+  document.querySelectorAll('[data-odometer-group]').forEach(group => {
+    if (group.hasAttribute(initFlag)) return
+    group.setAttribute(initFlag, '')
+
+    const elements = Array.from(group.querySelectorAll('[data-odometer-element]'))
+    if (!elements.length || prefersReducedMotion) return
+
+    const staggerOrder = group.getAttribute('data-odometer-stagger-order') || defaults.staggerOrder
+    const triggerStart = group.getAttribute('data-odometer-trigger-start') || defaults.triggerStart
+    const elementStagger = parseFloat(group.getAttribute('data-odometer-stagger')) || defaults.elementStagger
+
+    const elementData = elements.map(el => {
+      const originalText = el.textContent.trim()
+      const hasExplicitStart = el.hasAttribute('data-odometer-start')
+      const startValue = parseFloat(el.getAttribute('data-odometer-start')) || 0
+      const duration = parseFloat(el.getAttribute('data-odometer-duration')) || defaults.duration
+      const step = getLineHeightRatio(el)
+
+      let segments = parseSegments(originalText)
+      segments = mapStartDigits(segments, startValue)
+      segments = markHiddenSegments(segments, startValue)
+
+      const grow = shouldGrow(el, hasExplicitStart, startValue, segments)
+      const { rollers, revealEls } = buildRollerDOM(el, segments, step, grow)
+
+      const fontSize = parseFloat(getComputedStyle(el).fontSize)
+      const revealData = revealEls.map(revealEl => {
+        const widthEm = revealEl.offsetWidth / fontSize
+        gsap.set(revealEl, { width: 0, overflow: 'hidden' })
+        return { el: revealEl, widthEm }
+      })
+
+      return { el, rollers, duration, step, revealData, originalText }
+    })
+
+    const ordered = applyStaggerOrder(elementData, staggerOrder)
+
+    const tl = gsap.timeline({
+      scrollTrigger: {
+        trigger: group,
+        start: "top bottom",
+        end: triggerStart,
+        toggleActions: "none play none reset",
+      },
+      onComplete() {
+        elementData.forEach(({ el, originalText, step }) => {
+          cleanupElement(el, originalText)
+        })
+      }
+    })
+
+    ordered.forEach((data, orderIdx) => {
+      const { rollers, duration, step, revealData } = data
+      const offset = orderIdx * elementStagger
+
+      revealData.forEach(({ el, widthEm }) => {
+        tl.to(el, {
+          width: widthEm + 'em',
+          opacity: 1,
+          duration: defaults.revealDuration,
+          ease: defaults.revealEase
+        }, offset)
+      })
+
+      rollers.forEach(({ roller, targetPos }, digitIdx) => {
+        const reversedIdx = rollers.length - 1 - digitIdx
+        tl.to(roller, {
+          y: -targetPos * step + 'em',
+          duration,
+          ease: defaults.ease,
+          force3D: true
+        }, offset + reversedIdx * defaults.digitStagger)
+      })
+    })
+  })
+
+  // Programmatic update (optional add-on)
+  return function updateOdometer(el, newText, options = {}) {
+    const currentText = el.textContent.trim()
+    if (currentText === newText) return
+
+    const duration = options.duration || defaults.duration
+    const ease = options.ease || defaults.ease
+    const step = getLineHeightRatio(el)
+
+    // Kill any running animation and clear its inline style locks
+    const existing = activeTweens.get(el)
+    if (existing) {
+      existing.kill()
+      gsap.set(el, { clearProps: 'width,overflow' })
+    }
+
+    // Measure current width before rebuilding (in em for responsive scaling)
+    const fontSize = parseFloat(getComputedStyle(el).fontSize)
+    const oldWidthEm = el.getBoundingClientRect().width / fontSize
+
+    // Parse current text as start, new text as end
+    const startSegments = parseSegments(currentText)
+    const startDigitsStr = startSegments
+      .filter(s => s.type === 'digit')
+      .map(s => s.char)
+      .join('')
+    const startValue = parseInt(startDigitsStr, 10) || 0
+
+    let segments = parseSegments(newText)
+    segments = mapStartDigits(segments, startValue)
+    segments = markHiddenSegments(segments, startValue)
+    const { rollers, revealEls } = buildRollerDOM(el, segments, step, true)
+
+    // Measure new natural width (in em)
+    const newWidthEm = el.getBoundingClientRect().width / fontSize
+    const widthChanged = Math.abs(oldWidthEm - newWidthEm) > 0.01
+
+    // Lock to old width for smooth transition
+    if (widthChanged) {
+      gsap.set(el, { width: oldWidthEm + 'em', overflow: 'hidden' })
+    }
+
+    const tl = gsap.timeline({
+      onComplete() {
+        cleanupElement(el, newText)
+        activeTweens.delete(el)
+      }
+    })
+    activeTweens.set(el, tl)
+
+    // Animate element width
+    if (widthChanged) {
+      tl.to(el, {
+        width: newWidthEm + 'em',
+        duration: defaults.revealDuration,
+        ease: defaults.revealEase
+      }, 0)
+    }
+
+    // Fade in hidden statics
+    revealEls.forEach(revealEl => {
+      if (revealEl.getAttribute('data-odometer-part') === 'static') {
+        tl.to(revealEl, { opacity: 1, duration: 0.2 }, 0)
+      }
+    })
+
+    // Roll digits
+    rollers.forEach(({ roller, targetPos }, digitIdx) => {
+      const reversedIdx = rollers.length - 1 - digitIdx
+      tl.to(roller, {
+        y: -targetPos * step + 'em',
+        duration,
+        ease,
+        force3D: true
+      }, reversedIdx * defaults.digitStagger)
+    })
+  }
+
+  // Helpers
+  function getLineHeightRatio(el) {
+    const cs = getComputedStyle(el)
+    const lh = cs.lineHeight
+    if (lh === 'normal') return 1.2
+    return parseFloat(lh) / parseFloat(cs.fontSize)
+  }
+
+  function parseSegments(text) {
+    return [...text].map(char => ({
+      type: /\d/.test(char) ? 'digit' : 'static',
+      char
+    }))
+  }
+
+  function mapStartDigits(segments, startValue) {
+    const digitSlots = segments.filter(s => s.type === 'digit')
+    const padded = String(Math.floor(Math.abs(startValue)))
+      .padStart(digitSlots.length, '0')
+      .slice(-digitSlots.length)
+    let di = 0
+    return segments.map(s =>
+      s.type === 'digit'
+        ? { ...s, startDigit: parseInt(padded[di++], 10) }
+        : s
+    )
+  }
+
+  function markHiddenSegments(segments, startValue) {
+    const totalDigits = segments.filter(s => s.type === 'digit').length
+    const absStart = Math.floor(Math.abs(startValue))
+    const startDigitCount = absStart === 0 ? 1 : String(absStart).length
+    const leadingZeros = Math.max(0, totalDigits - startDigitCount)
+    if (leadingZeros === 0) return segments
+    let digitsSeen = 0
+    let firstDigitSeen = false
+    let prevDigitHidden = false
+    return segments.map(seg => {
+      if (seg.type === 'digit') {
+        firstDigitSeen = true
+        const hidden = digitsSeen < leadingZeros
+        prevDigitHidden = hidden
+        digitsSeen++
+        return { ...seg, hidden }
+      }
+      const hidden = firstDigitSeen && prevDigitHidden
+      return { ...seg, hidden }
+    })
+  }
+
+  function shouldGrow(el, hasExplicitStart, startValue, segments) {
+    if (el.hasAttribute('data-odometer-grow')) {
+      return el.getAttribute('data-odometer-grow') !== 'false'
+    }
+    if (!hasExplicitStart) return false
+    const absStart = Math.floor(Math.abs(startValue))
+    const startDigitCount = absStart === 0 ? 1 : String(absStart).length
+    const endDigitCount = segments.filter(s => s.type === 'digit').length
+    return startDigitCount < endDigitCount
+  }
+
+  function buildRollerDOM(el, segments, step, grow) {
+    el.innerHTML = ''
+    el.style.height = ''
+    const rollers = []
+    const revealEls = []
+    const totalCells = 10 * defaults.digitCycles
+    segments.forEach(seg => {
+      if (seg.type === 'static') {
+        const span = document.createElement('span')
+        span.setAttribute('data-odometer-part', 'static')
+        span.style.height = step + 'em'
+        span.style.lineHeight = step
+        span.textContent = seg.char
+        el.appendChild(span)
+        if (grow && seg.hidden) {
+          gsap.set(span, { opacity: 0 })
+          revealEls.push(span)
+        }
+        return
+      }
+      const mask = document.createElement('span')
+      mask.setAttribute('data-odometer-part', 'mask')
+      mask.style.height = step + 'em'
+      mask.style.lineHeight = step
+      const roller = document.createElement('span')
+      roller.setAttribute('data-odometer-part', 'roller')
+      roller.style.lineHeight = step
+
+      const digits = []
+      for (let d = 0; d < totalCells; d++) {
+        digits.push(d % 10)
+      }
+      roller.textContent = digits.join('\n')
+      mask.appendChild(roller)
+      el.appendChild(mask)
+      const startDigit = seg.startDigit || 0
+      const isReveal = grow && seg.hidden
+      gsap.set(roller, { y: isReveal ? step + 'em' : -startDigit * step + 'em' })
+      const endDigit = parseInt(seg.char, 10)
+      const targetPos = endDigit > startDigit ? endDigit : 10 + endDigit
+      rollers.push({ roller, targetPos })
+      if (isReveal) revealEls.push(mask)
+    })
+    return { rollers, revealEls }
+  }
+
+  function cleanupElement(el, originalText) {
+    el.style.overflow = ''
+    el.style.height = ''
+
+    // Remove rollers, set final digit, clear inline bloat (but preserve width)
+    const digits = [...originalText].filter(c => /\d/.test(c))
+    let di = 0
+
+    el.querySelectorAll('[data-odometer-part="mask"]').forEach(mask => {
+      const roller = mask.querySelector('[data-odometer-part="roller"]')
+      if (roller) roller.remove()
+      mask.textContent = digits[di++] || ''
+      mask.style.opacity = ''
+      mask.style.overflow = ''
+    })
+
+    el.querySelectorAll('[data-odometer-part="static"]').forEach(stat => {
+      stat.style.opacity = ''
+    })
+  }
+
+  function recalcOnResize() {
+    document.querySelectorAll('[data-odometer-element]').forEach(el => {
+      // Force-complete any running programmatic animation
+      const running = activeTweens.get(el)
+      if (running) {
+        running.progress(1)
+        activeTweens.delete(el)
+      }
+
+      const hasRollers = el.querySelector('[data-odometer-part="roller"]')
+
+      if (hasRollers) {
+        // Pre-triggered: recalculate step-based inline styles
+        const step = getLineHeightRatio(el)
+        el.querySelectorAll('[data-odometer-part="mask"]').forEach(mask => {
+          mask.style.height = step + 'em'
+          mask.style.lineHeight = step
+        })
+        el.querySelectorAll('[data-odometer-part="roller"]').forEach(roller => {
+          roller.style.lineHeight = step
+        })
+        el.querySelectorAll('[data-odometer-part="static"]').forEach(stat => {
+          stat.style.lineHeight = step
+        })
+      }
+      // Completed elements: width is em-based, scales automatically, don't touch
+    })
+    ScrollTrigger.refresh()
+  }
+
+  let resizeTimer
+  let lastWidth = window.innerWidth
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(() => {
+      if (window.innerWidth === lastWidth) return
+      lastWidth = window.innerWidth
+      recalcOnResize()
+    }, 250)
+  })
+
+  function applyStaggerOrder(items, order) {
+    const arr = [...items]
+    if (order === 'right') return arr.reverse()
+    if (order === 'random') return shuffleArray(arr)
+    return arr
+  }
+
+  function shuffleArray(arr) {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[arr[i], arr[j]] = [arr[j], arr[i]]
+    }
+    return arr
+  }
+}
+
 
 // Initialize Mega Navigation (Directional Hover)
 document.addEventListener('DOMContentLoaded', function() {
     document.fonts.ready.then(function () {
     initButton046();
+    initFOUC();
+    initLoadAnimations();
+    initScrollAnimations();
+    initTextSplit();
   });
   initMegaNavDirectionalHover();
   initMediaSetup();
   initMarqueeScrollDirection();
   initCobe();
   initLenis();
+  initMouseMove();
+    initNumberOdometer();
+    initGlobalParallax();
 });
   
 
