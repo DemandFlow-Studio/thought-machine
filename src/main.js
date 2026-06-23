@@ -4,6 +4,9 @@ import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { SplitText } from 'gsap/all';
 import Lenis from 'lenis';
 import createGlobe from './lib/cobe-custom.js';
+import Swiper from 'swiper';
+import { Navigation } from 'swiper/modules';
+import 'swiper/css';
 
 gsap.registerPlugin(CustomEase, ScrollTrigger, SplitText);
 CustomEase.create('button-046-ease', '0.32, 0.72, 0, 1');
@@ -778,8 +781,8 @@ function initMegaNavDirectionalHover() {
   function animateBurger(toX) {
     const tl = gsap.timeline({ defaults: { ease: "power2.inOut" } });
     if (toX) {
-      tl.to(lineTop, { y: "0.3125em", duration: 0.15 }, 0);
-      tl.to(lineBot, { y: "-0.3125em", duration: 0.15 }, 0);
+      tl.to(lineTop, { y: "0.375em", duration: 0.15 }, 0);
+      tl.to(lineBot, { y: "-0.375em", duration: 0.15 }, 0);
       tl.to(lineMid, { autoAlpha: 0, duration: 0.1 }, 0.1);
       tl.to(lineTop, { rotation: 45, duration: 0.2 }, 0.15);
       tl.to(lineBot, { rotation: -45, duration: 0.2 }, 0.15);
@@ -925,6 +928,9 @@ function initMegaNavDirectionalHover() {
 
   function handleToggleClick(e) {
     if (!state.isMobile || !state.mobileMenuOpen) return;
+    // On phones (<768px) the dropdowns are native Webflow dropdowns — don't hijack
+    // the click with the custom slide-in panel. Tablet (768–991) keeps the panels.
+    if (window.innerWidth < 768) return;
     const name = e.currentTarget.getAttribute("data-dropdown-toggle");
     if (name) { e.preventDefault(); openMobilePanel(name); }
   }
@@ -1005,6 +1011,10 @@ function initMegaNavDirectionalHover() {
 function initCobe() {
   const canvas = document.querySelector('[data-cobe-canvas]');
   if (!canvas) return;
+
+  // Skip on mobile (run on tablet and up). 768px is Webflow's tablet breakpoint —
+  // mobile landscape tops out at 767px, so < 768 = phone.
+  if (window.innerWidth < 768) return;
 
   // Cap DPR at 2 — anything higher just burns GPU with no visible gain
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1588,14 +1598,15 @@ function initGlobalParallax() {
     }
 	
 function initSwipers() {
-      $("[data-swiper=use-cases]").each(function() {
+      $("[data-swiper=case-studies]").each(function() {
         const swiperTarget = $(this)[0];
-        const swiperNext = $("[data-swiper-next=use-cases]")[0];
-        const swiperPrev = $("[data-swiper-prev=use-cases]")[0];
+        const swiperNext = $("[data-swiper-next=case-studies]")[0];
+        const swiperPrev = $("[data-swiper-prev=case-studies]")[0];
 
         const swiper = new Swiper(swiperTarget, {
+          modules: [Navigation],
           speed: 600,
-          spaceBetween: 24,
+          spaceBetween: 15,
           slidesPerView: "auto",
           navigation: {
             nextEl: swiperNext,
@@ -2024,6 +2035,7 @@ document.addEventListener('DOMContentLoaded', function() {
   initMouseMove();
     initNumberOdometer();
     initGlobalParallax();
+    initSwipers();
 });
   
 
