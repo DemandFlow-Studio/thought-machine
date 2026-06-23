@@ -2,25 +2,59 @@ import gsap from 'gsap';
 import { CustomEase } from 'gsap/CustomEase';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import Lenis from 'lenis';
-import createGlobe from 'cobe';
+import createGlobe from './lib/cobe-custom.js';
 
 gsap.registerPlugin(CustomEase, ScrollTrigger);
 CustomEase.create('button-046-ease', '0.32, 0.72, 0, 1');
 
-  // Initialize a new Lenis instance for smooth scrolling
-const lenis = new Lenis();
+// Top-level so it's accessible throughout the file
+let lenis = null;
 
-// Synchronize Lenis scrolling with GSAP's ScrollTrigger plugin
-lenis.on('scroll', ScrollTrigger.update);
+let rafCallback = null;
+let touchQuery = null;
 
-// Add Lenis's requestAnimationFrame (raf) method to GSAP's ticker
-// This ensures Lenis's smooth scroll animation updates on each GSAP tick
-gsap.ticker.add((time) => {
-  lenis.raf(time * 1000); // Convert time from seconds to milliseconds
-});
+function initLenis() {
+  // Set up the listener once, then evaluate current state
+  if (!touchQuery) {
+    touchQuery = window.matchMedia('(pointer: coarse)');
+    touchQuery.addEventListener('change', syncLenis);
+  }
+  syncLenis();
+}
 
-// Disable lag smoothing in GSAP to prevent any delay in scroll animations
-gsap.ticker.lagSmoothing(0);
+function syncLenis() {
+  if (touchQuery.matches) {
+    destroyLenis();
+  } else {
+    startLenis();
+  }
+}
+
+function startLenis() {
+  if (lenis) return; // already running
+
+  lenis = new Lenis();
+  lenis.on('scroll', ScrollTrigger.update);
+
+  rafCallback = (time) => {
+    lenis.raf(time * 1000); // seconds → milliseconds
+  };
+  gsap.ticker.add(rafCallback);
+  gsap.ticker.lagSmoothing(0);
+}
+
+function destroyLenis() {
+  if (!lenis) return; // already stopped
+
+  gsap.ticker.remove(rafCallback);
+  rafCallback = null;
+
+  lenis.destroy();
+  lenis = null;
+
+  gsap.ticker.lagSmoothing(500, 33); // restore GSAP default
+  ScrollTrigger.refresh();
+}
 
 
 function initButton046() {
@@ -1016,7 +1050,7 @@ function initCobe() {
 
   // Push the globe down so only the upper "dome" sits in view — pair this with
   // your bottom gradient mask in CSS for the faded-horizon look.
-  const verticalOffset = () => height * dpr * 0.5;
+  const verticalOffset = () => height * dpr * 0.575;
 
   // Shared with the HTML overlay projection below, so the dots stay locked to the
   // rendered markers. Keep these in sync with the createGlobe options.
@@ -1074,13 +1108,15 @@ function initCobe() {
     height: height * dpr,
     phi: 0,                         // start azimuth; driven by the render loop after
     theta,                          // start tilt (vertical angle)
-    dark: 0,                        // 1 = dark mode: dark base + LIGHTER country dots (needed for light countries)
-    diffuse: 2,                   // 0..~2 — directional shading; lower = flatter (less night-side falloff)
+    dark: 1,                        // 1 = dark mode: the DOTS are the lit element, so landColor colours the dots
+                                    //                 themselves. 0 = light mode: dots are dark holes in a lit field.
+    diffuse: 1.2,                   // 0..~2 — directional shading; lower = flatter (less night-side falloff)
     mapSamples: 18000,              // number of dots sampled across the map (density)
     mapBrightness: 8,               // brightness of the COUNTRY dots — raise for lighter
-    mapBaseBrightness: 0,         // brightness of the BASE (ocean) — raise toward ~1 to restore the
-                                    // dark:0 base look; countries stay lighter while this stays below ~0.7
-    baseColor: [0.09803921568627451, 0.09803921568627451, 0.09803921568627451],   // colour/tint of the dots (now effectively the country-dot colour)
+    mapBaseBrightness: 0,           // brightness of the OCEAN dots — 0 = only continents show on the solid fill
+    baseColor: [0.09803921568627451, 0.09803921568627451, 0.09803921568627451],   // colour of the ocean dots (only shows if mapBaseBrightness > 0)
+    landColor: [0.1, 0.1, 0.1],  // PATCHED option: colour of the COUNTRY dots, independent of baseColor
+    baseFill: [0.09803921568627451, 0.09803921568627451, 0.09803921568627451],     // PATCHED option: solid sphere colour behind the dots (your old base grey)
     markerColor: BLUE,              // fallback for markers without their own color
     glowColor: [0.09803921568627451, 0.09803921568627451, 0.09803921568627451], // atmosphere rim glow
     arcColor: BLUE,                 // fallback for arcs without their own color
@@ -1234,6 +1270,7 @@ document.addEventListener('DOMContentLoaded', function() {
   initMediaSetup();
   initMarqueeScrollDirection();
   initCobe();
+  initLenis();
 });
   
 
