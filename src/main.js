@@ -2,6 +2,7 @@ import gsap from 'gsap';
 import { CustomEase } from 'gsap/CustomEase';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import Lenis from 'lenis';
+import createGlobe from 'cobe';
 
 gsap.registerPlugin(CustomEase, ScrollTrigger);
 CustomEase.create('button-046-ease', '0.32, 0.72, 0, 1');
@@ -395,7 +396,7 @@ function initButton046() {
   });
 }
 
-  function initMegaNavDirectionalHover() {
+function initMegaNavDirectionalHover() {
   const DUR = {
     bgMorph: 0.4,
     contentIn: 0.3,
@@ -448,6 +449,7 @@ function initButton046() {
   const getNavItems = () => navList.querySelectorAll("[data-nav-list-item]");
   const getIndex = (name) => toggles.indexOf(getToggle(name));
   const stagger = (n) => (n <= 1 ? 0 : { amount: DUR.stagger });
+  const isPanelHidden = (name) => !!getToggle(name)?.hasAttribute("data-panel-hidden");
 
   function clearTimers() {
     clearTimeout(state.hoverTimer);
@@ -524,8 +526,9 @@ function initButton046() {
     if (state.isOpen && state.activePanel === panelName) return;
     if (state.isOpen) return switchPanel(state.activePanel, panelName);
 
-    const height = measurePanel(panelName);
-    if (!height) return;
+    const hidden = isPanelHidden(panelName);
+    const height = hidden ? 0 : measurePanel(panelName);
+    if (!hidden && !height) return;
 
     killDropdown();
     resetDesktop();
@@ -587,8 +590,9 @@ function initButton046() {
     if (!fromEl || !toEl) return;
 
     const fromFade = getFade(fromEl), toFade = getFade(toEl);
-    const toHeight = measurePanel(toName);
-    if (!toHeight) return;
+    const toHidden = isPanelHidden(toName);
+    const toHeight = toHidden ? 0 : measurePanel(toName);
+    if (!toHidden && !toHeight) return;
 
     killDropdown();
 
@@ -963,6 +967,264 @@ function initButton046() {
 }
 
 
+function initCobe() {
+  const canvas = document.querySelector('[data-cobe-canvas]');
+  if (!canvas) return;
+
+  // Cap DPR at 2 — anything higher just burns GPU with no visible gain
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // cobe expects colors as 0–1 RGB triplets, not 0–255
+  const BLUE = [0.16, 0.55, 1];
+  const PURPLE = [0.62, 0.24, 1];
+
+  // A dispersed, lightly-randomised set of points (regenerated on each load).
+  // Latitudes are biased to the upper hemisphere since only the top of the globe is
+  // in view, and longitudes are evenly spread + jittered so points don't cluster.
+  // Swap this for a fixed array of { id, location:[lat,lng], color } to pin them.
+  // POINT_COUNT must be even — points are paired off into arcs (see below).
+  const palette = [BLUE, PURPLE];
+  const rand = (min, max) => min + Math.random() * (max - min);
+  const POINT_COUNT = 8;
+  const markers = Array.from({ length: POINT_COUNT }, (_, i) => ({
+    id: `pt-${i}`,
+    location: [rand(22, 68), -180 + (360 / POINT_COUNT) * i + rand(-12, 12)],
+    size: 0.025,
+    color: palette[Math.floor(Math.random() * palette.length)],
+  }));
+
+  // Pair the points into a random matching: every dot gets exactly one arc (so no
+  // dot is left unconnected) and the arcs don't chain through shared endpoints.
+  const shuffled = markers.slice();
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  const arcs = [];
+  for (let i = 0; i + 1 < shuffled.length; i += 2) {
+    arcs.push({
+      from: shuffled[i].location,
+      to: shuffled[i + 1].location,
+      color: palette[Math.floor(Math.random() * palette.length)],
+    });
+  }
+
+  // --- Sizing -----------------------------------------------------------------
+  let width = canvas.offsetWidth;
+  let height = canvas.offsetHeight;
+
+  // Push the globe down so only the upper "dome" sits in view — pair this with
+  // your bottom gradient mask in CSS for the faded-horizon look.
+  const verticalOffset = () => height * dpr * 0.5;
+
+  // Shared with the HTML overlay projection below, so the dots stay locked to the
+  // rendered markers. Keep these in sync with the createGlobe options.
+  const scale = 3;
+  const markerElevation = 0;
+
+  // --- Rotation, drag & inertia -----------------------------------------------
+  // We render `phi`/`theta` but ease them toward `*Target` each frame, so dragging
+  // feels weighty rather than instantaneous. On release, `phiVel` carries the last
+  // drag speed and decays (momentum) before the idle auto-spin resumes.
+  let phi = 0;             // rendered azimuth (passed to the globe)
+  let phiTarget = 0;       // where drag / inertia wants phi to be
+  let phiVel = 0;          // angular velocity used for post-release momentum
+  const theta = 0.3;       // fixed tilt (dome framing) — dragging is horizontal-only
+  let pointerDown = false;
+  let lastX = 0;
+
+  const autoSpeed = reduceMotion ? 0 : 0.00125; // idle auto-spin (radians/frame)
+  const DRAG_SENS = 0.0025;   // radians of rotation per px dragged
+  const SMOOTH = 0.06;        // 0..1 ease toward target each frame (higher = snappier)
+  const FRICTION = 0.975;     // momentum decay per frame after release (lower = stops sooner)
+
+  canvas.style.cursor = 'grab';
+  canvas.style.touchAction = 'none'; // let us own the drag gesture on touch devices
+
+  const onPointerDown = (e) => {
+    pointerDown = true;
+    lastX = e.clientX;
+    phiVel = 0;            // cancel leftover momentum when grabbed
+    canvas.style.cursor = 'grabbing';
+    canvas.setPointerCapture?.(e.pointerId);
+  };
+
+  const onPointerMove = (e) => {
+    if (!pointerDown) return;
+    const dx = e.clientX - lastX;     // horizontal drag only — vertical is ignored
+    lastX = e.clientX;
+    phiTarget += dx * DRAG_SENS;
+    phiVel = dx * DRAG_SENS;          // last movement seeds the release momentum
+  };
+
+  const onPointerUp = () => {
+    pointerDown = false;
+    canvas.style.cursor = 'grab';
+  };
+
+  canvas.addEventListener('pointerdown', onPointerDown);
+  window.addEventListener('pointermove', onPointerMove);
+  window.addEventListener('pointerup', onPointerUp);
+
+  // --- Globe ------------------------------------------------------------------
+  const globe = createGlobe(canvas, {
+    devicePixelRatio: dpr,          // backing-store density; capped at 2 above
+    width: width * dpr,             // buffer size in px (CSS size * dpr)
+    height: height * dpr,
+    phi: 0,                         // start azimuth; driven by the render loop after
+    theta,                          // start tilt (vertical angle)
+    dark: 0,                        // 1 = dark mode: dark base + LIGHTER country dots (needed for light countries)
+    diffuse: 2,                   // 0..~2 — directional shading; lower = flatter (less night-side falloff)
+    mapSamples: 18000,              // number of dots sampled across the map (density)
+    mapBrightness: 8,               // brightness of the COUNTRY dots — raise for lighter
+    mapBaseBrightness: 0,         // brightness of the BASE (ocean) — raise toward ~1 to restore the
+                                    // dark:0 base look; countries stay lighter while this stays below ~0.7
+    baseColor: [0.09803921568627451, 0.09803921568627451, 0.09803921568627451],   // colour/tint of the dots (now effectively the country-dot colour)
+    markerColor: BLUE,              // fallback for markers without their own color
+    glowColor: [0.09803921568627451, 0.09803921568627451, 0.09803921568627451], // atmosphere rim glow
+    arcColor: BLUE,                 // fallback for arcs without their own color
+    arcWidth: 0.1,                  // thickness of the arc lines
+    arcHeight: 0.33,                // how high the arcs bow off the surface
+    markerElevation,                // how far markers float above the surface
+    opacity: 1,                     // 0..1 — overall globe opacity
+    scale,                          // zoom — larger fills more of the section
+    offset: [0, verticalOffset()],  // [x, y] px shift of the globe within the canvas
+    markers: [],                    // cobe's own markers are flat solid dots; the HTML
+                                    // overlay below renders the markers instead (so they
+                                    // can glow / animate). Pass `markers` here to re-enable.
+    arcs,
+  });
+
+  // --- HTML marker overlays (cross-browser) -----------------------------------
+  // cobe's built-in "bindable markers" rely on CSS Anchor Positioning, which only
+  // works in Chromium. To support every browser we project each marker to screen
+  // space ourselves (mirroring cobe's marker vertex shader) and drive plain
+  // absolutely-positioned elements. Each marker gets a <div class="cobe-marker">
+  // you can style/animate freely; it fades out as the point rotates behind the globe.
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+  const smoothstep = (a, b, v) => { const t = clamp01((v - a) / (b - a)); return t * t * (3 - 2 * t); };
+  const rgbToCss = (c) => `rgb(${c.map((v) => Math.round(v * 255)).join(', ')})`;
+
+  // Inject low-specificity defaults once so dots are visible out of the box but any
+  // CSS you write (in Webflow) overrides them easily.
+  if (!document.getElementById('cobe-marker-styles')) {
+    const style = document.createElement('style');
+    style.id = 'cobe-marker-styles';
+    style.textContent =
+      '.cobe-marker :where(.cobe-marker__dot){display:block;width:10px;height:10px;' +
+      'border-radius:9999px;background:var(--cobe-color,#4ea3ff);' +
+      'box-shadow:0 0 10px 1px var(--cobe-color,#4ea3ff);}';
+    document.head.appendChild(style);
+  }
+
+  // cobe wraps the canvas in a position:relative div on init — overlay into it.
+  const wrapper = canvas.parentElement;
+  const layer = document.createElement('div');
+  layer.className = 'cobe-markers';
+  // overflow:hidden clips dots (and their glow) to the canvas box, so they can't
+  // spill into the section below — matching how the canvas itself clips.
+  layer.style.cssText = 'position:absolute;pointer-events:none;overflow:hidden;';
+  wrapper.appendChild(layer);
+
+  // Reuse an element you placed in Webflow ([data-cobe-marker="id"]) if present,
+  // otherwise create a default dot. Either way we own its position + opacity.
+  const markerEls = markers.map((m) => {
+    let el = wrapper.querySelector(`[data-cobe-marker="${m.id}"]`);
+    if (!el) {
+      el = document.createElement('div');
+      el.dataset.cobeMarker = m.id;
+      el.className = 'cobe-marker';
+      el.innerHTML = '<span class="cobe-marker__dot"></span>';
+    }
+    layer.appendChild(el); // move into the overlay so all transforms share one origin
+    el.style.position = 'absolute';
+    el.style.left = '0';
+    el.style.top = '0';
+    el.style.willChange = 'transform, opacity';
+    el.style.setProperty('--cobe-color', rgbToCss(m.color)); // expose colour to CSS
+    return { m, el };
+  });
+
+  // Keep the overlay layer aligned with the canvas box (CSS px).
+  const layoutLayer = () => {
+    layer.style.left = `${canvas.offsetLeft}px`;
+    layer.style.top = `${canvas.offsetTop}px`;
+    layer.style.width = `${canvas.offsetWidth}px`;
+    layer.style.height = `${canvas.offsetHeight}px`;
+  };
+  layoutLayer();
+
+  // Project [lat, lng] to {x, y} CSS px within the layer + a front/back factor,
+  // matching cobe's shader so the dots stay locked onto the rendered markers.
+  const projectMarker = (loc) => {
+    const latR = loc[0] * Math.PI / 180;
+    const lngR = loc[1] * Math.PI / 180 - Math.PI;
+    const cl = Math.cos(latR);
+    const r = 0.8 + markerElevation;
+    const ax = -cl * Math.cos(lngR) * r;
+    const ay = Math.sin(latR) * r;
+    const az = cl * Math.sin(lngR) * r;
+
+    const c = Math.cos(theta), d = Math.sin(theta), e = Math.cos(phi), f = Math.sin(phi);
+    const lx = e * ax + f * az;
+    const ly = f * d * ax + c * ay - e * d * az;
+    const lz = -f * c * ax + d * ay + e * c * az; // > 0 = front hemisphere
+
+    const aspect = height / width;
+    const clipX = lx * aspect * scale;
+    const clipY = ly * scale - (verticalOffset() * scale) / (height * dpr);
+
+    return {
+      x: (clipX * 0.5 + 0.5) * width,
+      y: (0.5 - clipY * 0.5) * height,
+      visible: smoothstep(0, 0.25, lz), // fade across the limb as it turns away
+    };
+  };
+
+  const positionMarkers = () => {
+    for (const { m, el } of markerEls) {
+      const p = projectMarker(m.location);
+      el.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) translate(-50%, -50%)`;
+      el.style.opacity = p.visible;
+      el.style.setProperty('--cobe-visible', p.visible.toFixed(3));
+    }
+  };
+
+  // Resize: cobe needs pixel dimensions, so re-feed width/height/offset on change
+  const onResize = () => {
+    width = canvas.offsetWidth;
+    height = canvas.offsetHeight;
+    globe.update({ width: width * dpr, height: height * dpr, offset: [0, verticalOffset()] });
+    layoutLayer();
+  };
+  window.addEventListener('resize', onResize);
+
+  // --- Render loop ------------------------------------------------------------
+  // This build of cobe has no internal loop — calling update() is what renders a
+  // frame, so we drive it ourselves with requestAnimationFrame.
+  const render = () => {
+    if (pointerDown) {
+      // While dragging, phiTarget/thetaTarget follow the pointer (see onPointerMove).
+    } else if (Math.abs(phiVel) > 0.0001) {
+      phiTarget += phiVel;    // coast with momentum after release
+      phiVel *= FRICTION;
+    } else {
+      phiVel = 0;
+      phiTarget += autoSpeed; // resume idle auto-spin once momentum settles
+    }
+
+    // Ease the rendered angle toward its target for a smooth, weighty feel.
+    phi += (phiTarget - phi) * SMOOTH;
+
+    globe.update({ phi, theta });
+    positionMarkers();          // keep HTML overlays locked to the markers
+    requestAnimationFrame(render);
+  };
+  requestAnimationFrame(render);
+}
+
+
 // Initialize Mega Navigation (Directional Hover)
 document.addEventListener('DOMContentLoaded', function() {
     document.fonts.ready.then(function () {
@@ -971,6 +1233,7 @@ document.addEventListener('DOMContentLoaded', function() {
   initMegaNavDirectionalHover();
   initMediaSetup();
   initMarqueeScrollDirection();
+  initCobe();
 });
   
 
