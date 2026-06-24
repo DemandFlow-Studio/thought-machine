@@ -8,6 +8,7 @@ import Swiper from 'swiper';
 import { Navigation } from 'swiper/modules';
 import 'swiper/css';
 
+
 gsap.registerPlugin(CustomEase, ScrollTrigger, SplitText);
 CustomEase.create('button-046-ease', '0.32, 0.72, 0, 1');
 
@@ -18,6 +19,7 @@ let rafCallback = null;
 let touchQuery = null;
 
 function initLenis() {
+  
   // Set up the listener once, then evaluate current state
   if (!touchQuery) {
     touchQuery = window.matchMedia('(pointer: coarse)');
@@ -1283,6 +1285,7 @@ function initFOUC() {
     }
   });
   ScrollTrigger.refresh();
+  lenis.resize();
 }
 
 function initTextSplit() {
@@ -1454,7 +1457,7 @@ function initScrollAnimations() {
                 scrollTrigger: {
           trigger: el,
           start: "top bottom",
-          end: "top 80%",
+          end: "top 90%",
           toggleActions: "none play none reset",
         },
       });
@@ -1476,7 +1479,7 @@ el.addEventListener("splitReady", (e) => {
                         scrollTrigger: {
           trigger: el,
           start: "top bottom",
-          end: "top 80%",
+          end: "top 90%",
           toggleActions: "none play none reset",
         },
       });
@@ -1495,7 +1498,7 @@ el.addEventListener("splitReady", (e) => {
         yPercent: 25,
         ease: "expo.out",
         stagger: {
-          each: 0.05,
+          each: 0.075,
         },
         scrollTrigger: {
           trigger: el,
@@ -2018,24 +2021,49 @@ function initNumberOdometer() {
 }
 
 
-// Initialize Mega Navigation (Directional Hover)
-document.addEventListener('DOMContentLoaded', function() {
-    document.fonts.ready.then(function () {
-    initButton046();
-    initFOUC();
-    initLoadAnimations();
-    initScrollAnimations();
-    initTextSplit();
-  });
+// // Initialize Mega Navigation (Directional Hover)
+// document.addEventListener('DOMContentLoaded', function() {
+//     document.fonts.ready.then(function () {
+//     initButton046();
+//     initFOUC();
+//     initLoadAnimations();
+//     initScrollAnimations();
+//     initTextSplit();
+//   });
+//   initMegaNavDirectionalHover();
+//   initMediaSetup();
+//   initMarqueeScrollDirection();
+//   initCobe();
+//   initLenis();
+//   initMouseMove();
+//     initNumberOdometer();
+//     initGlobalParallax();
+//     initSwipers();
+// });
+
+document.addEventListener('DOMContentLoaded', () => {
+  // visual, font-independent — run immediately
+  initButton046();
   initMegaNavDirectionalHover();
   initMediaSetup();
-  initMarqueeScrollDirection();
-  initCobe();
-  initLenis();
+  initNumberOdometer();
   initMouseMove();
-    initNumberOdometer();
-    initGlobalParallax();
-    initSwipers();
+  initMarqueeScrollDirection();
+  initLenis();
+  initCobe();
+  initSwipers();
+  initGlobalParallax();
+
+  // font-dependent (SplitText metrics) — gate only these
+  document.fonts.ready.then(() => {
+      initFOUC();    
+        initScrollAnimations();  // non-split scroll fades
+
+          initLoadAnimations();
+          // reveal containers ASAP
+    initTextSplit();
+    lenis.resize();
+  });
 });
   
 
