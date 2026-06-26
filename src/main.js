@@ -2049,7 +2049,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initNumberOdometer();
   initMouseMove();
   initMarqueeScrollDirection();
-  initLenis();
+  // initLenis();
   initCobe();
   initSwipers();
   initGlobalParallax();
