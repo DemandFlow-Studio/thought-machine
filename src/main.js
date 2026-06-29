@@ -5,7 +5,7 @@ import { SplitText } from 'gsap/all';
 import Lenis from 'lenis';
 import createGlobe from './lib/cobe-custom.js';
 import Swiper from 'swiper';
-import { Navigation } from 'swiper/modules';
+import { Navigation, Scrollbar } from 'swiper/modules';
 import 'swiper/css';
 
 
@@ -1624,6 +1624,38 @@ function initSwipers() {
           },
         })
       })
+
+      $("[data-swiper=case-studies-full]").each(function() {
+        const swiperTarget = $(this)[0];
+        const swiperNext = $("[data-swiper-next=case-studies-full]")[0];
+        const swiperPrev = $("[data-swiper-prev=case-studies-full]")[0];
+        const scrollBar = $("[data-swiper-scrollbar]")[0];
+
+        const options = {
+          modules: [Navigation, Scrollbar],
+          speed: 600,
+          spaceBetween: 32,
+          slidesPerView: "auto",
+          mousewheel: {
+            forceToAxis: true,
+          },
+          a11y: {
+            enabled: true,
+            slideRole: 'listitem'
+          },
+        };
+
+        // Only register these features when their elements exist — passing an
+        // undefined el makes Swiper call getComputedStyle on it and throw.
+        if (swiperNext && swiperPrev) {
+          options.navigation = { nextEl: swiperNext, prevEl: swiperPrev };
+        }
+        if (scrollBar) {
+          options.scrollbar = { el: scrollBar, draggable: true };
+        }
+
+        const swiper = new Swiper(swiperTarget, options);
+      })
     }
 
     function initMouseMove() {
@@ -2093,13 +2125,13 @@ function initTabSystem() {
         outgoingVisual?.classList.remove("active");
         tl.set(outgoingBar, { transformOrigin: "right center" })
           .to(outgoingBar, { scaleX: 0, duration: 0.3 }, 0)
-          .to(outgoingVisual, { autoAlpha: 0, xPercent: 3 }, 0)
+          .to(outgoingVisual, { autoAlpha: 0, yPercent: -5, }, 0)
           .to(outgoingContent.querySelector('[data-tabs="item-details"]'), { height: 0 }, 0);
       }
 
       incomingContent.classList.add("active");
       incomingVisual.classList.add("active");
-      tl.fromTo(incomingVisual, { autoAlpha: 0, xPercent: 3 }, { autoAlpha: 1, xPercent: 0 }, 0.3)
+      tl.fromTo(incomingVisual, { autoAlpha: 0, yPercent: 5, }, { autoAlpha: 1, yPercent: 0, }, 0.1)
         .fromTo( incomingContent.querySelector('[data-tabs="item-details"]'),{ height: 0 },{ height: "auto" },0)
         .set(incomingBar, { scaleX: 0, transformOrigin: "left center" }, 0);
     }
