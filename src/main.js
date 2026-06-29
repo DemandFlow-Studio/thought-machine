@@ -1625,14 +1625,14 @@ function initSwipers() {
         })
       })
 
-      $("[data-swiper=case-studies-full]").each(function() {
-        const swiperTarget = $(this)[0];
-        const swiperNext = $("[data-swiper-next=case-studies-full]")[0];
-        const swiperPrev = $("[data-swiper-prev=case-studies-full]")[0];
-        const scrollBar = $("[data-swiper-scrollbar]")[0];
-
-        const options = {
-          modules: [Navigation, Scrollbar],
+      const swiperCaseStudiesFull = document.querySelectorAll("[data-swiper=case-studies-full]");
+      swiperCaseStudiesFull.forEach((swiperEl) => {
+        const swiperNext = document.querySelector("[data-swiper-next=case-studies-full]");
+        const swiperPrev = document.querySelector("[data-swiper-prev=case-studies-full]");
+        const swiperScroll = document.querySelector("[data-swiper-scrollbar=case-studies-full]");
+        
+        const swiper = new Swiper(swiperEl, {
+                    modules: [Navigation, Scrollbar],
           speed: 600,
           spaceBetween: 32,
           slidesPerView: "auto",
@@ -1643,18 +1643,8 @@ function initSwipers() {
             enabled: true,
             slideRole: 'listitem'
           },
-        };
+        })
 
-        // Only register these features when their elements exist — passing an
-        // undefined el makes Swiper call getComputedStyle on it and throw.
-        if (swiperNext && swiperPrev) {
-          options.navigation = { nextEl: swiperNext, prevEl: swiperPrev };
-        }
-        if (scrollBar) {
-          options.scrollbar = { el: scrollBar, draggable: true };
-        }
-
-        const swiper = new Swiper(swiperTarget, options);
       })
     }
 
