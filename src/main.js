@@ -1636,9 +1636,11 @@ function initSwipers() {
           speed: 600,
           spaceBetween: 32,
           slidesPerView: "auto",
+          grabCursor: true,
           navigation: {
             nextEl: swiperNext,
             prevEl: swiperPrev,
+            disabledClass: "is-disabled",
           },
           scrollbar: {
             el: swiperScroll,
