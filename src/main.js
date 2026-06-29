@@ -1636,6 +1636,14 @@ function initSwipers() {
           speed: 600,
           spaceBetween: 32,
           slidesPerView: "auto",
+          navigation: {
+            nextEl: swiperNext,
+            prevEl: swiperPrev,
+          },
+          scrollbar: {
+            el: swiperScroll,
+            draggable: true,
+          },
           mousewheel: {
             forceToAxis: true,
           },
