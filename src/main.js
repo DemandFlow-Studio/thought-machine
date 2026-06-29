@@ -2152,6 +2152,148 @@ function initTabSystem() {
   });
 }
 
+ // [ANIMATED BACKGROUND - CASCADE]
+  function initAnimatedBackground() {
+    if (typeof gsap === 'undefined') return;
+
+    const container = document.querySelector('[data-el="cascade-bg"]');
+    const source = container ? container.querySelector('[data-el="cascade-source"]') : null;
+    if (!container || !source) return;
+    if (container.dataset.jsInit === 'true') return; // don't double-init
+    container.dataset.jsInit = 'true';
+
+    // ---- Configuration ----
+    const CONFIG = {
+      cycleSeconds: 16,        // time for one copy to cross the full path
+      copiesPerTrack: 3,       // copies in flight at once
+      scaleStart: 1,           // size at spawn (left)
+      scaleEnd: 0.34,          // size as it recedes (right)
+      maxOpacity: 1,           // global opacity multiplier
+      travelEase: 1.0,         // 1 = linear; >1 decelerates toward the end
+      blend: 'screen',         // 'screen' | 'plus-lighter' | 'lighten' | 'normal'
+      baseHeightRatio: 1.5,   // copy height at scale 1, relative to container height
+      yRatio: 0.5,             // vertical centre of the track (fraction of height)
+      driftRatio: 0.04,        // subtle vertical drift across the journey
+      xStart: -0.25,           // centre start X (off-screen left)
+      xEnd: 0.75,              // centre end X (off-screen right)
+      fadeIn: 0.05,            // fraction of path spent fading in
+      fadeOut: 0.125,           // fraction after which fade-out begins
+      parallax: { x: -20, y: 14, ease: 0.6 } // subtle mouse parallax (max px shift)
+    };
+
+    const ASPECT = (source.naturalWidth && source.naturalHeight)
+      ? source.naturalWidth / source.naturalHeight
+      : 849 / 905; // matches the supplied asset
+
+    // ---- math helpers ----
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+    const smooth = (x) => x * x * (3 - 2 * x);                 // smoothstep
+    const easeTravel = (p) => 1 - Math.pow(1 - p, CONFIG.travelEase);
+
+    // ---- build the layer + copies ----
+    const layer = document.createElement('div');
+    layer.setAttribute('data-el', 'cascade-layer');
+    container.appendChild(layer);
+
+    const copies = [];
+    for (let i = 0; i < CONFIG.copiesPerTrack; i++) {
+      const el = source.cloneNode(true);
+      el.setAttribute('data-el', 'cascade-copy');
+      el.setAttribute('aria-hidden', 'true');
+      el.draggable = false;
+      el.style.mixBlendMode = CONFIG.blend;
+      layer.appendChild(el);
+      copies.push({ el: el, offset: i / CONFIG.copiesPerTrack });
+    }
+
+    source.style.display = 'none'; // hide the original AFTER cloning
+
+    // ---- layout (recomputed on resize) ----
+    let W = 0, H = 0, baseW = 0, baseH = 0;
+    function computeLayout() {
+      const rect = container.getBoundingClientRect();
+      W = rect.width;
+      H = rect.height;
+      baseH = H * CONFIG.baseHeightRatio;
+      baseW = baseH * ASPECT;
+      copies.forEach((c) => {
+        c.el.style.width = baseW + 'px';
+        c.el.style.height = baseH + 'px';
+      });
+    }
+
+    function fade(sp) {
+      let o;
+      if (sp < CONFIG.fadeIn) o = sp / CONFIG.fadeIn;
+      else if (sp > CONFIG.fadeOut) o = 1 - (sp - CONFIG.fadeOut) / (1 - CONFIG.fadeOut);
+      else o = 1;
+      return smooth(clamp01(o));
+    }
+
+    function render(copy, p) {
+      const sp = easeTravel(p);
+      const cx = lerp(CONFIG.xStart * W, CONFIG.xEnd * W, sp);
+      const cy = CONFIG.yRatio * H + CONFIG.driftRatio * H * sp;
+      const s = lerp(CONFIG.scaleStart, CONFIG.scaleEnd, sp);
+      const op = fade(sp) * CONFIG.maxOpacity;
+      copy.el.style.transform =
+        'translate3d(' + (cx - baseW / 2) + 'px,' + (cy - baseH / 2) + 'px,0) scale(' + s + ')';
+      copy.el.style.opacity = op;
+      copy.el.style.zIndex = (s * 1000) | 0; // bigger copies in front
+    }
+
+    // ---- clock (one shared GSAP ticker) ----
+    let elapsed = 0;
+    let running = false;
+    let offscreen = false;
+    let hidden = false;
+    const speed = 1 / CONFIG.cycleSeconds;
+
+    function tick(time, deltaMs) {
+      if (offscreen || hidden) return; // skip work when not visible
+      elapsed += deltaMs / 1000;
+      copies.forEach((c) => render(c, (c.offset + elapsed * speed) % 1));
+    }
+    function start() { if (!running) { running = true; gsap.ticker.add(tick); } }
+    function renderStatic() { copies.forEach((c) => render(c, c.offset)); }
+
+    computeLayout();
+
+    // resize
+    if ('ResizeObserver' in window) {
+      new ResizeObserver(computeLayout).observe(container);
+    } else {
+      window.addEventListener('resize', computeLayout);
+    }
+
+    // pause off-screen + when the tab is hidden (battery friendly)
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver((entries) => {
+        offscreen = !entries[0].isIntersecting;
+      }, { threshold: 0 }).observe(container);
+    }
+    document.addEventListener('visibilitychange', () => { hidden = document.hidden; });
+
+    // ---- subtle mouse parallax (pointer devices only) ----
+    const canHover = window.matchMedia('(pointer: fine)').matches;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    if (canHover && !reduce) {
+      const xTo = gsap.quickTo(layer, 'x', { duration: CONFIG.parallax.ease, ease: 'power3' });
+      const yTo = gsap.quickTo(layer, 'y', { duration: CONFIG.parallax.ease, ease: 'power3' });
+      window.addEventListener('pointermove', (e) => {
+        const px = (e.clientX / window.innerWidth - 0.5) * 2;  // -1 .. 1
+        const py = (e.clientY / window.innerHeight - 0.5) * 2;
+        xTo(px * CONFIG.parallax.x);
+        yTo(py * CONFIG.parallax.y);
+      }, { passive: true });
+    }
+
+    if (reduce) renderStatic(); // respect reduced motion: a calm static frame
+    else start();
+  }
+
 document.addEventListener('DOMContentLoaded', () => {
   // visual, font-independent — run immediately
   initButton046();
@@ -2165,6 +2307,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSwipers();
   initGlobalParallax();
     initTabSystem();
+    initAnimatedBackground();
 
 
   // font-dependent (SplitText metrics) — gate only these
