@@ -1383,6 +1383,18 @@ const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;    el.ad
     })
   })
 
+  document.querySelectorAll("[data-anim-load=diagonal-mask]").forEach((el) => {
+    const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;
+    gsap.fromTo(el, {
+      clipPath: "polygon(0% 0%, 0% 0%, -100% 100%, 0% 100%)",
+    }, {
+      clipPath: "polygon(0% 0%, 200% 0%, 100% 100%, 0% 100%)",
+      duration: 2,
+      ease: "expo.out",
+      delay: globalLoadDelay + delay,
+    })
+  })
+
   document.querySelectorAll("[data-anim-load=button]").forEach((el) => {
     const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;
     gsap.from(el, {
@@ -2307,6 +2319,136 @@ function initToggleSwitches() {
     let activeIndex = buttons.findIndex((btn) => btn.hasAttribute("data-toggle-active"));
     if (activeIndex < 0) activeIndex = 0;
 
+    // --- Optional hero-slide wiring ------------------------------------------
+    // If this toggle lives in a [data-hero-visual] that also holds a
+    // [data-hero-slides-wrap] with a matching number of [data-hero-slide]
+    // children, drive those slides from the toggle. If not, the toggle behaves
+    // exactly as before (buttons only) — this whole block simply stays dormant.
+    const scope = toggle.closest("[data-hero-visual]") || toggle.parentElement;
+    const slidesWrap = scope && scope.querySelector("[data-hero-slides-wrap]");
+    const slides = slidesWrap ? [...slidesWrap.querySelectorAll("[data-hero-slide]")] : [];
+    const hasSlides =
+      typeof gsap !== "undefined" && slides.length === buttons.length && slides.length > 0;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    // Autoplay is opt-in via data attributes on [data-toggle-init], mirroring
+    // initTabSystem. e.g. data-toggle-autoplay="true" data-toggle-autoplay-duration="5000"
+    const autoplay = toggle.dataset.toggleAutoplay === "true";
+    const autoplayDuration = parseInt(toggle.dataset.toggleAutoplayDuration, 10) || 5000;
+
+    // Diagonal wipe clip-paths. The moving edge is the "/" line from (p%, 0) at the
+    // top to (p-100%, 100%) at the bottom — a constant-slope diagonal that sweeps
+    // left→right as p runs 0→200. ENTER reveals the region LEFT of that edge (it
+    // grows to fill the box); EXIT hides that same left region (so the slide shows
+    // only what's RIGHT of the edge, shrinking to nothing). Because both use the
+    // exact same edge at the same progress, the incoming reveal and the outgoing
+    // hide track each other pixel-for-pixel — it reads as one seamless wipe.
+    //
+    // ENTER_TO and EXIT_FROM are both the full box visually (just different vertex
+    // orderings), so snapping between them on a resting slide is invisible.
+    const CLIP_ENTER_FROM = "polygon(0% 0%, 0% 0%, -100% 100%, 0% 100%)";     // revealed: nothing
+    const CLIP_ENTER_TO   = "polygon(0% 0%, 200% 0%, 100% 100%, 0% 100%)";    // revealed: full box
+    const CLIP_EXIT_FROM  = "polygon(0% 0%, 100% 0%, 100% 100%, -100% 100%)"; // showing: full box
+    const CLIP_EXIT_TO    = "polygon(200% 0%, 100% 0%, 100% 100%, 100% 100%)"; // showing: nothing
+
+    let currentSlide = hasSlides ? slides[activeIndex] : null;
+    let autoplayTimer = null;
+    const slideTweens = new Map(); // slide -> its currently-running timeline
+    const exiting = new Set();     // slides mid-exit (so we don't restart their wipe)
+
+    function scheduleAutoplay() {
+      clearTimeout(autoplayTimer);
+      if (!autoplay || reduceMotion || buttons.length < 2) return;
+      autoplayTimer = setTimeout(() => {
+        setActive((activeIndex + 1) % buttons.length);
+      }, autoplayDuration);
+    }
+
+    // Each slide owns exactly one timeline. Before handing it a new one we kill the
+    // old — but we never touch any OTHER slide's timeline, so interrupting one
+    // transition can't orphan a slide that's still animating (the old stuck bug).
+    function killSlide(slide) {
+      const tl = slideTweens.get(slide);
+      if (tl) tl.kill();
+      gsap.killTweensOf(slide);
+    }
+
+    function playEnter(slide) {
+      killSlide(slide);
+      exiting.delete(slide);
+      const tl = gsap.timeline();
+      tl.set(slide, { zIndex: 2, autoAlpha: 1 }) // visible instantly — reveal is clip + slide, not a fade
+        .fromTo(slide.querySelector("img"), { xPercent: 25 }, { xPercent: 0, duration: 1.5, ease: "expo.out" }, 0)
+        .fromTo(slide, { clipPath: CLIP_ENTER_FROM }, { clipPath: CLIP_ENTER_TO, duration: 1, ease: "power2.out" }, 0);
+      slideTweens.set(slide, tl);
+    }
+
+    function playExit(slide) {
+      killSlide(slide);
+      exiting.add(slide);
+      // The slide hides ITSELF on completion, so even one interrupted mid-enter by
+      // rapid clicks is always driven fully out — it can never get stuck visible.
+      const tl = gsap.timeline({
+        onComplete: () => {
+          exiting.delete(slide);
+          gsap.set(slide, { autoAlpha: 0 });
+        },
+      });
+      tl.set(slide, { zIndex: 1 })
+        .fromTo(slide, { clipPath: CLIP_EXIT_FROM }, { clipPath: CLIP_EXIT_TO, duration: 1, ease: "power2.out" }, 0)
+        .to(slide.querySelector("img"), { xPercent: -25, duration: 1.5, ease: "expo.out" }, 0);
+      slideTweens.set(slide, tl);
+    }
+
+    // One-time slide setup: park every non-active slide in its fully-hidden pose so
+    // the CSS `visibility:hidden` is owned by GSAP from here on.
+    function initSlides() {
+      slides.forEach((slide, i) => {
+        const isActive = i === activeIndex;
+        slide.toggleAttribute("data-hero-slide-active", isActive);
+        gsap.set(slide, {
+          xPercent: 0,
+          clipPath: isActive ? CLIP_ENTER_TO : CLIP_EXIT_TO,
+          autoAlpha: isActive ? 1 : 0, // autoAlpha drives visibility + opacity (no fade wanted)
+          zIndex: isActive ? 2 : 1,
+        });
+      });
+      currentSlide = slides[activeIndex];
+    }
+
+    function switchSlide(index) {
+      const incoming = slides[index];
+      if (incoming === currentSlide) return;
+
+      slides.forEach((slide, i) =>
+        slide.toggleAttribute("data-hero-slide-active", i === index)
+      );
+
+      // Reduced motion: swap instantly, no animation.
+      if (reduceMotion) {
+        slides.forEach((slide, i) =>
+          gsap.set(slide, {
+            xPercent: 0,
+            clipPath: i === index ? CLIP_ENTER_TO : CLIP_EXIT_TO,
+            autoAlpha: i === index ? 1 : 0,
+            zIndex: i === index ? 2 : 1,
+          })
+        );
+        exiting.clear();
+        currentSlide = incoming;
+        return;
+      }
+
+      // Exit any visible slide that isn't the target. Skip ones already exiting so
+      // their wipe finishes cleanly instead of snapping back to full and re-wiping.
+      slides.forEach((slide) => {
+        if (slide === incoming || exiting.has(slide)) return;
+        if (gsap.getProperty(slide, "opacity") > 0) playExit(slide);
+      });
+      playEnter(incoming);
+      currentSlide = incoming;
+    }
+
     function setActive(index) {
       activeIndex = index;
       toggle.style.setProperty("--toggle-active", index);
@@ -2316,6 +2458,8 @@ function initToggleSwitches() {
         btn.toggleAttribute("data-toggle-active", isActive);
         btn.tabIndex = isActive ? 0 : -1;
       });
+      if (hasSlides) switchSlide(index);
+      scheduleAutoplay();
     }
 
     function onClick(event) {
@@ -2337,13 +2481,29 @@ function initToggleSwitches() {
       btn.addEventListener("keydown", onKeydown);
     });
 
+    // Pause autoplay while the pointer is over the visual, resume on leave.
+    const pauseHost = hasSlides ? scope : null;
+    const onEnter = () => clearTimeout(autoplayTimer);
+    const onLeave = () => scheduleAutoplay();
+    if (pauseHost && autoplay) {
+      pauseHost.addEventListener("pointerenter", onEnter);
+      pauseHost.addEventListener("pointerleave", onLeave);
+    }
+
+    if (hasSlides) initSlides(); // set slide poses before the first activation
     setActive(activeIndex);
 
     cleanups.push(() => {
+      clearTimeout(autoplayTimer);
+      slideTweens.forEach((tl) => tl.kill());
       buttons.forEach((btn) => {
         btn.removeEventListener("click", onClick);
         btn.removeEventListener("keydown", onKeydown);
       });
+      if (pauseHost && autoplay) {
+        pauseHost.removeEventListener("pointerenter", onEnter);
+        pauseHost.removeEventListener("pointerleave", onLeave);
+      }
     });
   });
 
