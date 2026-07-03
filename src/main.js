@@ -2165,7 +2165,7 @@ function initTabSystem() {
     // ---- Configuration ----
     const CONFIG = {
       cycleSeconds: 16,        // time for one copy to cross the full path
-      copiesPerTrack: 3,       // copies in flight at once
+      copiesPerTrack: 2,       // copies in flight at once
       scaleStart: 1,           // size at spawn (left)
       scaleEnd: 0.34,          // size as it recedes (right)
       maxOpacity: 1,           // global opacity multiplier
@@ -2294,6 +2294,64 @@ function initTabSystem() {
     else start();
   }
 
+function initToggleSwitches() {
+  const cleanups = [];
+
+  document.querySelectorAll("[data-toggle-init]").forEach((toggle) => {
+    const buttons = [...toggle.querySelectorAll("[data-toggle-btn]")];
+    if (buttons.length < 2) return;
+
+    toggle.style.setProperty("--toggle-count", buttons.length);
+
+    // Initial active is the marked button, otherwise the first.
+    let activeIndex = buttons.findIndex((btn) => btn.hasAttribute("data-toggle-active"));
+    if (activeIndex < 0) activeIndex = 0;
+
+    function setActive(index) {
+      activeIndex = index;
+      toggle.style.setProperty("--toggle-active", index);
+      buttons.forEach((btn, i) => {
+        const isActive = i === index;
+        btn.setAttribute("aria-pressed", isActive ? "true" : "false");
+        btn.toggleAttribute("data-toggle-active", isActive);
+        btn.tabIndex = isActive ? 0 : -1;
+      });
+    }
+
+    function onClick(event) {
+      const index = buttons.indexOf(event.currentTarget);
+      if (index !== activeIndex) setActive(index);
+    }
+
+    function onKeydown(event) {
+      const dir = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+      if (!dir) return;
+      event.preventDefault();
+      const next = (activeIndex + dir + buttons.length) % buttons.length;
+      setActive(next);
+      buttons[next].focus();
+    }
+
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", onClick);
+      btn.addEventListener("keydown", onKeydown);
+    });
+
+    setActive(activeIndex);
+
+    cleanups.push(() => {
+      buttons.forEach((btn) => {
+        btn.removeEventListener("click", onClick);
+        btn.removeEventListener("keydown", onKeydown);
+      });
+    });
+  });
+
+  // Return a destroy function
+  return () => cleanups.forEach((fn) => fn());
+}
+
+
 document.addEventListener('DOMContentLoaded', () => {
   // visual, font-independent — run immediately
   initButton046();
@@ -2308,6 +2366,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initGlobalParallax();
     initTabSystem();
     initAnimatedBackground();
+      initToggleSwitches();
+
 
 
   // font-dependent (SplitText metrics) — gate only these
