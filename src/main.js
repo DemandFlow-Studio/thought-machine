@@ -2514,91 +2514,92 @@ function initToggleSwitches() {
 
 function initSmooothy() {
   const section = document.querySelector("[data-slider-section]");
-
   const sliderEl = document.querySelector("[data-slider]");
   if (!sliderEl) return;
 
-class AutoScrollSlider extends Core {
-  #isPaused = false
-  #scrollSpeed = 0.15 // units per second (adjust for faster/slower)
-  #wasDragging = false
+  class AutoScrollSlider extends Core {
+    #isPaused = false;
+    #scrollSpeed = 0.15; // slides per second (adjust for faster/slower)
+    #wasDragging = false;
+    #resumeTimer = null;
+    #tick = null;
 
-  constructor(container, config = {}) {
-    super(container.querySelector("[data-slider]"), {
-      ...config,
-      infinite: true,
-      snap: false, // Disable snap for smooth continuous scrolling
-    })
+    constructor(wrapper, config = {}) {
+      super(wrapper, {
+        ...config,
+        infinite: true,
+        snap: false, // free continuous scrolling
+      });
 
-    // Override update to add continuous scrolling
-    const originalUpdate = this.update.bind(this)
-    this.update = () => {
-      // Apply continuous auto-scroll before the original update
+      // Store a single bound reference so we can add AND remove the same fn
+      this.#tick = this.update.bind(this);
+      gsap.ticker.add(this.#tick);
+
+      this.#setupPauseOnInteraction();
+    }
+
+    // Library-provided per-frame hook (runs inside Core's update)
+    onUpdate = () => {
       if (!this.#isPaused && this.isVisible && !this.isDragging) {
-        // Continuously move target forward
-        this.target -= this.#scrollSpeed * this.deltaTime
+        // Drive continuous motion via target (index space); Core lerps current toward it
+        this.target -= this.#scrollSpeed * this.deltaTime;
       }
+      this.#checkDragging();
+    };
 
-      originalUpdate()
-      this.#checkDragging()
+    #checkDragging() {
+      if (this.isDragging && !this.#wasDragging) {
+        // Started dragging
+        this.#isPaused = true;
+        this.#wasDragging = true;
+      } else if (!this.isDragging && this.#wasDragging) {
+        // Stopped dragging - resume after delay
+        this.#wasDragging = false;
+        this.#scheduleResume();
+      }
     }
 
-    // Register the ticker AFTER the override so it drives the wrapped update
-    gsap.ticker.add(this.update)
+    #scheduleResume() {
+      clearTimeout(this.#resumeTimer);
+      this.#resumeTimer = setTimeout(() => {
+        this.#isPaused = false;
+      }, 2000);
+    }
 
-    this.#setupPauseOnInteraction()
-  }
+    #setupPauseOnInteraction() {
+      const el = this.wrapper;
 
-  #checkDragging() {
-    if (this.isDragging && !this.#wasDragging) {
-      // Started dragging
-      this.#isPaused = true
-      this.#wasDragging = true
-    } else if (!this.isDragging && this.#wasDragging) {
-      // Stopped dragging - resume after delay
-      this.#wasDragging = false
-      setTimeout(() => {
-        this.#isPaused = false
-      }, 2000)
+      // Pause on hover
+      el.addEventListener("mouseenter", () => {
+        this.#isPaused = true;
+      });
+      el.addEventListener("mouseleave", () => {
+        this.#isPaused = false;
+      });
+
+      // Pause on touch, resume after delay
+      el.addEventListener(
+        "touchstart",
+        () => {
+          this.#isPaused = true;
+        },
+        { passive: true }
+      );
+      el.addEventListener("touchend", () => this.#scheduleResume());
+    }
+
+    destroy() {
+      clearTimeout(this.#resumeTimer);
+      if (this.#tick) gsap.ticker.remove(this.#tick);
+      super.destroy?.();
     }
   }
 
-  #setupPauseOnInteraction() {
-    const slider = this.wrapper
-
-    // Pause on hover
-    slider.addEventListener("mouseenter", () => {
-      this.#isPaused = true
-    })
-
-    slider.addEventListener("mouseleave", () => {
-      this.#isPaused = false
-    })
-
-    // Pause on touch start
-    slider.addEventListener("touchstart", () => {
-      this.#isPaused = true
-    })
-
-    slider.addEventListener("touchend", () => {
-      // Resume after a delay when touch ends
-      setTimeout(() => {
-        this.#isPaused = false
-      }, 2000)
-    })
-  }
-
-  destroy() {
-    gsap.ticker.remove(this.update)
-    super.destroy?.()
-  }
-}
-
-new AutoScrollSlider(section, {
-  infinite: true,
-  snap: false,
-})
-
+  // Pass the actual [data-slider] element directly
+  new AutoScrollSlider(sliderEl, {
+    infinite: true,
+    snap: false,
+  });
 }
 document.addEventListener('DOMContentLoaded', () => {
   // visual, font-independent — run immediately
