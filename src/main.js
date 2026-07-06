@@ -7,6 +7,7 @@ import createGlobe from './lib/cobe-custom.js';
 import Swiper from 'swiper';
 import { Navigation, Scrollbar } from 'swiper/modules';
 import 'swiper/css';
+import Core from "smooothy";
 
 
 gsap.registerPlugin(CustomEase, ScrollTrigger, SplitText);
@@ -2351,7 +2352,94 @@ function initToggleSwitches() {
   return () => cleanups.forEach((fn) => fn());
 }
 
+function initSmooothy() {
+  const section = document.querySelector("[data-slider-section]");
 
+  const sliderEl = document.querySelector("[data-slider]");
+  if (!sliderEl) return;
+
+class AutoScrollSlider extends Core {
+  #isPaused = false
+  #scrollSpeed = 0.15 // units per second (adjust for faster/slower)
+  #wasDragging = false
+
+  constructor(container, config = {}) {
+    super(container.querySelector("[data-slider]"), {
+      ...config,
+      infinite: true,
+      snap: false, // Disable snap for smooth continuous scrolling
+    })
+
+    // Override update to add continuous scrolling
+    const originalUpdate = this.update.bind(this)
+    this.update = () => {
+      // Apply continuous auto-scroll before the original update
+      if (!this.#isPaused && this.isVisible && !this.isDragging) {
+        // Continuously move target forward
+        this.target -= this.#scrollSpeed * this.deltaTime
+      }
+
+      originalUpdate()
+      this.#checkDragging()
+    }
+
+    // Register the ticker AFTER the override so it drives the wrapped update
+    gsap.ticker.add(this.update)
+
+    this.#setupPauseOnInteraction()
+  }
+
+  #checkDragging() {
+    if (this.isDragging && !this.#wasDragging) {
+      // Started dragging
+      this.#isPaused = true
+      this.#wasDragging = true
+    } else if (!this.isDragging && this.#wasDragging) {
+      // Stopped dragging - resume after delay
+      this.#wasDragging = false
+      setTimeout(() => {
+        this.#isPaused = false
+      }, 2000)
+    }
+  }
+
+  #setupPauseOnInteraction() {
+    const slider = this.wrapper
+
+    // Pause on hover
+    slider.addEventListener("mouseenter", () => {
+      this.#isPaused = true
+    })
+
+    slider.addEventListener("mouseleave", () => {
+      this.#isPaused = false
+    })
+
+    // Pause on touch start
+    slider.addEventListener("touchstart", () => {
+      this.#isPaused = true
+    })
+
+    slider.addEventListener("touchend", () => {
+      // Resume after a delay when touch ends
+      setTimeout(() => {
+        this.#isPaused = false
+      }, 2000)
+    })
+  }
+
+  destroy() {
+    gsap.ticker.remove(this.update)
+    super.destroy?.()
+  }
+}
+
+new AutoScrollSlider(section, {
+  infinite: true,
+  snap: false,
+})
+
+}
 document.addEventListener('DOMContentLoaded', () => {
   // visual, font-independent — run immediately
   initButton046();
@@ -2367,6 +2455,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initTabSystem();
     initAnimatedBackground();
       initToggleSwitches();
+      initSmooothy();
 
 
 
