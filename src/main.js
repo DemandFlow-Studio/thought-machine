@@ -7,6 +7,7 @@ import createGlobe from './lib/cobe-custom.js';
 import Swiper from 'swiper';
 import { Navigation, Scrollbar } from 'swiper/modules';
 import 'swiper/css';
+import Core from "smooothy";
 
 
 gsap.registerPlugin(CustomEase, ScrollTrigger, SplitText);
@@ -2511,51 +2512,95 @@ function initToggleSwitches() {
   return () => cleanups.forEach((fn) => fn());
 }
 
-function initCopyEmailClipboard() {
-  const buttons = document.querySelectorAll('.copy-email-button');
-  if (!buttons.length) return;
+function initSmooothy() {
+  const section = document.querySelector("[data-slider-section]");
+  const sliderEl = document.querySelector("[data-slider]");
+  if (!sliderEl) return;
 
-  const copyEmail = (button) => {
-  	// Email to copy to clipboard is taking from the button itself, or if that's empty,
-    // from a text element inside the button
-    const email =
-      button.getAttribute('data-copy-email') ||
-      button.querySelector('[data-copy-email-element]').textContent.trim();
-    if (email) {
-      navigator.clipboard.writeText(email).then(() => {
-        button.setAttribute('data-copy-button', 'copied');
-        button.setAttribute('aria-label', 'Email copied to clipboard!');
+  class AutoScrollSlider extends Core {
+    #isPaused = false;
+    #scrollSpeed = 0.15; // slides per second (adjust for faster/slower)
+    #wasDragging = false;
+    #resumeTimer = null;
+    #tick = null;
+
+    constructor(wrapper, config = {}) {
+      super(wrapper, {
+        ...config,
+        infinite: true,
+        snap: false, // free continuous scrolling
       });
-    }
-  };
 
-  const handleInteraction = (e) => {
-    if (
-      e.type === 'click' ||
-      (e.type === 'keydown' && (e.key === 'Enter' || e.key === ' '))
-    ) {
-      e.preventDefault();
-      copyEmail(e.currentTarget);
-    }
-  };
+      // Store a single bound reference so we can add AND remove the same fn
+      this.#tick = this.update.bind(this);
+      gsap.ticker.add(this.#tick);
 
-  buttons.forEach((button) => {
-    button.addEventListener('click', handleInteraction);
-    button.addEventListener('keydown', handleInteraction);
-    button.addEventListener('mouseleave', () => {
-    	// Remove 'active' attribute to reset color and text transform
-      button.removeAttribute('data-copy-button');
-      // Remove focus on mouseleave to clear keyboard focus styling
-      button.blur();
-      button.setAttribute('aria-label', 'Copy email to clipboard');
-    });
-    button.addEventListener('blur', () => {
-      button.removeAttribute('data-copy-button');
-      button.setAttribute('aria-label', 'Copy email to clipboard');
-    });
+      this.#setupPauseOnInteraction();
+    }
+
+    // Library-provided per-frame hook (runs inside Core's update)
+    onUpdate = () => {
+      if (!this.#isPaused && this.isVisible && !this.isDragging) {
+        // Drive continuous motion via target (index space); Core lerps current toward it
+        this.target -= this.#scrollSpeed * this.deltaTime;
+      }
+      this.#checkDragging();
+    };
+
+    #checkDragging() {
+      if (this.isDragging && !this.#wasDragging) {
+        // Started dragging
+        this.#isPaused = true;
+        this.#wasDragging = true;
+      } else if (!this.isDragging && this.#wasDragging) {
+        // Stopped dragging - resume after delay
+        this.#wasDragging = false;
+        this.#scheduleResume();
+      }
+    }
+
+    #scheduleResume() {
+      clearTimeout(this.#resumeTimer);
+      this.#resumeTimer = setTimeout(() => {
+        this.#isPaused = false;
+      }, 2000);
+    }
+
+    #setupPauseOnInteraction() {
+      const el = this.wrapper;
+
+      // Pause on hover
+      el.addEventListener("mouseenter", () => {
+        this.#isPaused = true;
+      });
+      el.addEventListener("mouseleave", () => {
+        this.#isPaused = false;
+      });
+
+      // Pause on touch, resume after delay
+      el.addEventListener(
+        "touchstart",
+        () => {
+          this.#isPaused = true;
+        },
+        { passive: true }
+      );
+      el.addEventListener("touchend", () => this.#scheduleResume());
+    }
+
+    destroy() {
+      clearTimeout(this.#resumeTimer);
+      if (this.#tick) gsap.ticker.remove(this.#tick);
+      super.destroy?.();
+    }
+  }
+
+  // Pass the actual [data-slider] element directly
+  new AutoScrollSlider(sliderEl, {
+    infinite: true,
+    snap: false,
   });
 }
-
 document.addEventListener('DOMContentLoaded', () => {
   // visual, font-independent — run immediately
   initButton046();
@@ -2571,8 +2616,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initTabSystem();
     initAnimatedBackground();
       initToggleSwitches();
-        initCopyEmailClipboard();
-
+      initSmooothy();
 
 
 
