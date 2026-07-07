@@ -2529,6 +2529,7 @@ function initSmooothy() {
         ...config,
         infinite: true,
         snap: false, // free continuous scrolling
+        variableWidth: true,
       });
 
       // Store a single bound reference so we can add AND remove the same fn
@@ -2599,6 +2600,7 @@ function initSmooothy() {
   new AutoScrollSlider(sliderEl, {
     infinite: true,
     snap: false,
+            variableWidth: true,
   });
 }
 
