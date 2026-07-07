@@ -2519,10 +2519,14 @@ function initSmooothy() {
 
   class AutoScrollSlider extends Core {
     #isPaused = false;
-    #scrollSpeed = 0.15; // slides per second (adjust for faster/slower)
+    #scrollSpeed = 100; // slides per second (adjust for faster/slower)
     #wasDragging = false;
     #resumeTimer = null;
     #tick = null;
+    #parallaxStrength = -20; // max translateX (%) as a slide crosses the viewport
+    #parallaxElements = [];
+    #prefersReducedMotion = false;
+    #onWheel = null;
 
     constructor(wrapper, config = {}) {
       super(wrapper, {
@@ -2530,13 +2534,29 @@ function initSmooothy() {
         infinite: true,
         snap: false, // free continuous scrolling
         variableWidth: true,
+        dragSensitivity: 0.25
       });
 
       // Store a single bound reference so we can add AND remove the same fn
       this.#tick = this.update.bind(this);
       gsap.ticker.add(this.#tick);
 
+      this.#setupParallax();
       this.#setupPauseOnInteraction();
+      this.#preventHistoryNavigation();
+    }
+
+    // smooothy's own wheel listener is passive, so it can't stop the browser
+    // from treating a horizontal trackpad swipe as back/forward navigation.
+    // Add a non-passive listener that cancels the gesture when it's horizontal-
+    // dominant (which the slider consumes anyway); vertical scroll passes through.
+    #preventHistoryNavigation() {
+      this.#onWheel = (e) => {
+        if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+          e.preventDefault();
+        }
+      };
+      this.wrapper.addEventListener("wheel", this.#onWheel, { passive: false });
     }
 
     // Library-provided per-frame hook (runs inside Core's update)
@@ -2546,7 +2566,44 @@ function initSmooothy() {
         this.target -= this.#scrollSpeed * this.deltaTime;
       }
       this.#checkDragging();
+      this.#applyParallax();
     };
+
+    // Pair each [data-p] element with its owning slide so we can measure the
+    // slide's position (which smooothy transforms) rather than the element's own
+    // (which we transform) — reading the latter would create a feedback loop.
+    #setupParallax() {
+      this.#prefersReducedMotion = window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches;
+
+      this.#parallaxElements = [...this.wrapper.querySelectorAll("[data-p]")].map(
+        (el) => ({
+          el,
+          slide: this.items.find((item) => item.contains(el)) || el.parentElement,
+          // Optional per-element multiplier, e.g. data-p="0.5" for a subtler layer
+          factor: parseFloat(el.dataset.p) || 1,
+        })
+      );
+    }
+
+    // Runs every frame after smooothy has repositioned the slides. Normalize each
+    // slide's centre against the viewport centre (~[-1,1] as it crosses) so the
+    // effect is independent of variableWidth pixel units.
+    #applyParallax() {
+      if (this.#prefersReducedMotion || !this.#parallaxElements.length) return;
+
+      const wrapperRect = this.wrapper.getBoundingClientRect();
+      const center = wrapperRect.left + wrapperRect.width / 2;
+
+      this.#parallaxElements.forEach(({ el, slide, factor }) => {
+        const rect = slide.getBoundingClientRect();
+        const slideCenter = rect.left + rect.width / 2;
+        const normalized = (slideCenter - center) / wrapperRect.width;
+        const offset = normalized * this.#parallaxStrength * factor;
+        el.style.transform = `translateX(${offset}%)`;
+      });
+    }
 
     #checkDragging() {
       if (this.isDragging && !this.#wasDragging) {
@@ -2592,6 +2649,10 @@ function initSmooothy() {
     destroy() {
       clearTimeout(this.#resumeTimer);
       if (this.#tick) gsap.ticker.remove(this.#tick);
+      if (this.#onWheel) this.wrapper.removeEventListener("wheel", this.#onWheel);
+      this.#parallaxElements.forEach(({ el }) => {
+        el.style.transform = "";
+      });
       super.destroy?.();
     }
   }
@@ -2600,7 +2661,7 @@ function initSmooothy() {
   new AutoScrollSlider(sliderEl, {
     infinite: true,
     snap: false,
-            variableWidth: true,
+    variableWidth: true,
   });
 }
 
@@ -2665,7 +2726,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initTabSystem();
     initAnimatedBackground();
       initToggleSwitches();
-      initSmooothy();
         initCopyEmailClipboard();
 
 
@@ -2675,6 +2735,7 @@ document.addEventListener('DOMContentLoaded', () => {
   document.fonts.ready.then(() => {
       initFOUC();    
         initScrollAnimations();  // non-split scroll fades
+      initSmooothy();
 
           initLoadAnimations();
           // reveal containers ASAP
