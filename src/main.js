@@ -1500,7 +1500,7 @@ el.addEventListener("splitReady", (e) => {
     });
   });
 
-    document.querySelectorAll("[data-anim-scroll=children-slide-right-fade]").forEach((el) => {
+    document.querySelectorAll("[data-anim-scroll=children-slide-up-fade]").forEach((el) => {
       const children = el.children;
       const childTargets = el.querySelectorAll("[data-anim-target]");
       const animTargets = childTargets ? childTargets : children;
