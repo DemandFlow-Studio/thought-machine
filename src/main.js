@@ -1013,6 +1013,8 @@ function initMegaNavDirectionalHover() {
 
 function initCobe() {
   const canvas = document.querySelector('[data-cobe-canvas]');
+  const isLightMode = canvas.hasAttribute('data-theme-light');
+
   if (!canvas) return;
 
   // Skip on mobile (run on tablet and up). 768px is Webflow's tablet breakpoint —
@@ -1122,7 +1124,7 @@ function initCobe() {
     height: height * dpr,
     phi: 0,                         // start azimuth; driven by the render loop after
     theta,                          // start tilt (vertical angle)
-    dark: 1,                        // 1 = dark mode: the DOTS are the lit element, so landColor colours the dots
+    dark: isLightMode ? 0 : 1,        // 1 = dark mode: the DOTS are the lit element, so landColor colours the dots
                                     //                 themselves. 0 = light mode: dots are dark holes in a lit field.
     diffuse: 1.2,                   // 0..~2 — directional shading; lower = flatter (less night-side falloff)
     mapSamples: 18000,              // number of dots sampled across the map (density)
@@ -1130,9 +1132,9 @@ function initCobe() {
     mapBaseBrightness: 0,           // brightness of the OCEAN dots — 0 = only continents show on the solid fill
     baseColor: [0.09803921568627451, 0.09803921568627451, 0.09803921568627451],   // colour of the ocean dots (only shows if mapBaseBrightness > 0)
     landColor: [0.1, 0.1, 0.1],  // PATCHED option: colour of the COUNTRY dots, independent of baseColor
-    baseFill: [0.09803921568627451, 0.09803921568627451, 0.09803921568627451],     // PATCHED option: solid sphere colour behind the dots (your old base grey)
+    baseFill: isLightMode ? [0.9, 0.9, 0.9] : [0.09803921568627451, 0.09803921568627451, 0.09803921568627451],     // PATCHED option: solid sphere colour behind the dots (your old base grey)
     markerColor: BLUE,              // fallback for markers without their own color
-    glowColor: [0.09803921568627451, 0.09803921568627451, 0.09803921568627451], // atmosphere rim glow
+    glowColor: isLightMode ? [0.9, 0.9, 0.9] : [0.09803921568627451, 0.09803921568627451, 0.09803921568627451], // atmosphere rim glow
     arcColor: BLUE,                 // fallback for arcs without their own color
     arcWidth: 0.1,                  // thickness of the arc lines
     arcHeight: 0.33,                // how high the arcs bow off the surface
