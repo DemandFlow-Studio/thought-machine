@@ -1013,9 +1013,9 @@ function initMegaNavDirectionalHover() {
 
 function initCobe() {
   const canvas = document.querySelector('[data-cobe-canvas]');
-  const isLightMode = canvas.hasAttribute('data-theme-light');
-
   if (!canvas) return;
+
+  const isLightMode = canvas.hasAttribute('data-theme-light');
 
   // Skip on mobile (run on tablet and up). 768px is Webflow's tablet breakpoint —
   // mobile landscape tops out at 767px, so < 768 = phone.
