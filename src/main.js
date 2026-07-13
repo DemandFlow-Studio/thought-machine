@@ -1066,7 +1066,8 @@ function initCobe() {
 
   // Push the globe down so only the upper "dome" sits in view — pair this with
   // your bottom gradient mask in CSS for the faded-horizon look.
-  const verticalOffset = () => height * dpr * 0.575;
+  // CSS px — cobe multiplies the offset by devicePixelRatio internally.
+  const verticalOffset = () => height * 0.575;
 
   // Shared with the HTML overlay projection below, so the dots stay locked to the
   // rendered markers. Keep these in sync with the createGlobe options.
@@ -1120,8 +1121,8 @@ function initCobe() {
   // --- Globe ------------------------------------------------------------------
   const globe = createGlobe(canvas, {
     devicePixelRatio: dpr,          // backing-store density; capped at 2 above
-    width: width * dpr,             // buffer size in px (CSS size * dpr)
-    height: height * dpr,
+    width,                          // CSS px — cobe multiplies by devicePixelRatio
+    height,                         // internally (passing width*dpr here would render at dpr²)
     phi: 0,                         // start azimuth; driven by the render loop after
     theta,                          // start tilt (vertical angle)
     dark: isLightMode ? 0 : 1,        // 1 = dark mode: the DOTS are the lit element, so landColor colours the dots
@@ -1225,7 +1226,7 @@ function initCobe() {
 
     const aspect = height / width;
     const clipX = lx * aspect * scale;
-    const clipY = ly * scale - (verticalOffset() * scale) / (height * dpr);
+    const clipY = ly * scale - (verticalOffset() * scale) / height;
 
     return {
       x: (clipX * 0.5 + 0.5) * width,
@@ -1247,14 +1248,18 @@ function initCobe() {
   const onResize = () => {
     width = canvas.offsetWidth;
     height = canvas.offsetHeight;
-    globe.update({ width: width * dpr, height: height * dpr, offset: [0, verticalOffset()] });
+    globe.update({ width, height, offset: [0, verticalOffset()] });
     layoutLayer();
   };
   window.addEventListener('resize', onResize);
 
   // --- Render loop ------------------------------------------------------------
   // This build of cobe has no internal loop — calling update() is what renders a
-  // frame, so we drive it ourselves with requestAnimationFrame.
+  // frame, so we drive it ourselves with requestAnimationFrame. The loop only
+  // runs while the canvas is near the viewport: off-screen the globe freezes on
+  // its last frame and costs nothing (no WebGL draw, no marker style writes).
+  let rafId = null;
+
   const render = () => {
     if (pointerDown) {
       // While dragging, phiTarget/thetaTarget follow the pointer (see onPointerMove).
@@ -1271,9 +1276,30 @@ function initCobe() {
 
     globe.update({ phi, theta });
     positionMarkers();          // keep HTML overlays locked to the markers
-    requestAnimationFrame(render);
+    rafId = requestAnimationFrame(render);
   };
-  requestAnimationFrame(render);
+
+  const startLoop = () => {
+    if (rafId === null) rafId = requestAnimationFrame(render);
+  };
+  const stopLoop = () => {
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+  };
+
+  // Place the overlay dots once so they're correct even before the loop first
+  // runs (createGlobe already drew the first canvas frame on init).
+  positionMarkers();
+
+  // Fires immediately with the initial state, so the loop starts (or stays off)
+  // on load without an explicit first call. rootMargin gives a small head start
+  // so the globe is already spinning as it scrolls into view.
+  new IntersectionObserver(
+    ([entry]) => (entry.isIntersecting ? startLoop() : stopLoop()),
+    { rootMargin: '15% 0px' }
+  ).observe(canvas);
 }
 
 function initFOUC() {
@@ -2218,6 +2244,9 @@ function initTabSystem() {
       el.setAttribute('aria-hidden', 'true');
       el.draggable = false;
       el.style.mixBlendMode = CONFIG.blend;
+      // Persistent compositor layers: the copies animate transform/opacity on
+      // every visible frame, so holding their rasterization is a net win.
+      el.style.willChange = 'transform, opacity';
       layer.appendChild(el);
       copies.push({ el: el, offset: i / CONFIG.copiesPerTrack });
     }
@@ -2255,7 +2284,24 @@ function initTabSystem() {
       copy.el.style.transform =
         'translate3d(' + (cx - baseW / 2) + 'px,' + (cy - baseH / 2) + 'px,0) scale(' + s + ')';
       copy.el.style.opacity = op;
-      copy.el.style.zIndex = (s * 1000) | 0; // bigger copies in front
+      copy.sp = sp; // stashed for applyZOrder() — no z-index write here
+    }
+
+    // Bigger copies (earlier in the path, smaller sp) render in front. Because
+    // the copies shrink continuously, their relative order only changes when one
+    // wraps back to the start — so writing z-index by rank, and only when the
+    // rank changes, replaces the old per-frame style.zIndex write (a style
+    // recalc every frame) with roughly one write per wrap.
+    function applyZOrder() {
+      copies
+        .slice()
+        .sort((a, b) => b.sp - a.sp) // back → front
+        .forEach((c, i) => {
+          if (c.z !== i) {
+            c.z = i;
+            c.el.style.zIndex = i;
+          }
+        });
     }
 
     // ---- clock (one shared GSAP ticker) ----
@@ -2269,9 +2315,10 @@ function initTabSystem() {
       if (offscreen || hidden) return; // skip work when not visible
       elapsed += deltaMs / 1000;
       copies.forEach((c) => render(c, (c.offset + elapsed * speed) % 1));
+      applyZOrder();
     }
     function start() { if (!running) { running = true; gsap.ticker.add(tick); } }
-    function renderStatic() { copies.forEach((c) => render(c, c.offset)); }
+    function renderStatic() { copies.forEach((c) => render(c, c.offset)); applyZOrder(); }
 
     computeLayout();
 
@@ -2389,6 +2436,9 @@ function initToggleSwitches() {
     function playExit(slide) {
       killSlide(slide);
       exiting.add(slide);
+      // NOTE: the exit clip animation is NOT redundant with the enter wipe — the
+      // slide graphics have transparent backgrounds, so without it the outgoing
+      // slide would show through the incoming slide's transparent regions.
       // The slide hides ITSELF on completion, so even one interrupted mid-enter by
       // rapid clicks is always driven fully out — it can never get stuck visible.
       const tl = gsap.timeline({
