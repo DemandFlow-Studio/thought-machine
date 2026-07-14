@@ -2784,17 +2784,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 
-  // font-dependent (SplitText metrics) — gate only these
-  document.fonts.ready.then(() => {
-      initFOUC();    
-        initScrollAnimations();  // non-split scroll fades
-      initSmooothy();
-
-          initLoadAnimations();
-          // reveal containers ASAP
+  // font-dependent (SplitText metrics) — gate only on the Labgrotesque weight(s)
+  // the animated text actually renders in (weight 400), NOT the global
+  // document.fonts.ready. The global promise waits for ~100 unused Open Sans /
+  // phantom Typekit + webfont.js faces injected by GTM, which delays the start.
+  // document.fonts.load('1em X') defaults to weight 400.
+  const startTextAnimations = () => {
+    initFOUC();
+    initScrollAnimations();  // non-split scroll fades
+    initSmooothy();
+    initLoadAnimations();
     initTextSplit();
     // lenis.resize();
-  });
+  };
+
+  document.fonts
+    .load('1em Labgrotesque')
+    .then(startTextAnimations)
+    .catch(startTextAnimations); // never let a font failure leave content hidden
 });
   
 
