@@ -364,20 +364,15 @@ function initButton046() {
     if (!marqueeContent || !marqueeScroll) return;
 
     // Get data attributes
-    const { marqueeSpeed: speed, marqueeDirection: direction, marqueeDuplicate: duplicate, marqueeScrollSpeed: scrollSpeed } = marquee.dataset;
+    const { marqueeSpeed: speed, marqueeDirection: direction, marqueeDuplicate: duplicate } = marquee.dataset;
 
     // Convert data attributes to usable types
     const marqueeSpeedAttr = parseFloat(speed);
-    const marqueeDirectionAttr = direction === 'right' ? 1 : -1; // 1 for right, -1 for left
+    const marqueeDirectionAttr = direction === 'right' ? -1 : -1; // 1 for right, -1 for left
     const duplicateAmount = parseInt(duplicate || 0);
-    const scrollSpeedAttr = parseFloat(scrollSpeed);
     const speedMultiplier = window.innerWidth < 479 ? 0.25 : window.innerWidth < 991 ? 0.5 : 1;
 
     let marqueeSpeed = marqueeSpeedAttr * (marqueeContent.offsetWidth / window.innerWidth) * speedMultiplier;
-
-    // Precompute styles for the scroll container
-    marqueeScroll.style.marginLeft = `${scrollSpeedAttr * -1}%`;
-    marqueeScroll.style.width = `${(scrollSpeedAttr * 2) + 100}%`;
 
     // Duplicate marquee content
     if (duplicateAmount > 0) {
@@ -405,35 +400,37 @@ function initButton046() {
     // Set initial marquee status
     marquee.setAttribute('data-marquee-status', 'normal');
 
-    // ScrollTrigger logic for direction inversion
+    // ScrollTrigger logic: the marquee always travels in its base direction.
+    // Scrolling (up OR down) only adds a slight speed boost in that same
+    // direction, which eases back to normal once scrolling settles.
+    const speedProxy = { boost: 1 };
+    let decayTween;
+
+    const applyTimeScale = () =>
+      animation.timeScale(marqueeDirectionAttr * speedProxy.boost);
+
     ScrollTrigger.create({
       trigger: marquee,
       start: 'top bottom',
       end: 'bottom top',
       onUpdate: (self) => {
-        const isInverted = self.direction === 1; // Scrolling down
-        const currentDirection = isInverted ? -marqueeDirectionAttr : marqueeDirectionAttr;
+        // Absolute velocity → scrolling either way accelerates, never reverses.
+        const velocity = Math.abs(self.getVelocity());
+        const targetBoost = 1 + Math.min(velocity / 2000, 1); // 1x–2x, kept subtle
 
-        // Update animation direction and marquee status
-        animation.timeScale(currentDirection);
-        marquee.setAttribute('data-marquee-status', isInverted ? 'normal' : 'inverted');
+        decayTween?.kill();
+        speedProxy.boost = targetBoost;
+        applyTimeScale();
+
+        // Ease the speed back down to normal once scrolling stops.
+        decayTween = gsap.to(speedProxy, {
+          boost: 1,
+          duration: 0.6,
+          ease: 'power2.out',
+          onUpdate: applyTimeScale,
+        });
       }
     });
-
-    // Extra speed effect on scroll
-    const tl = gsap.timeline({
-      scrollTrigger: {
-        trigger: marquee,
-        start: '0% 100%',
-        end: '100% 0%',
-        scrub: 1
-      }
-    });
-
-    const scrollStart = marqueeDirectionAttr === -1 ? scrollSpeedAttr : -scrollSpeedAttr;
-    const scrollEnd = -scrollStart;
-
-    tl.fromTo(marqueeScroll, { x: `${scrollStart}vw` }, { x: `${scrollEnd}vw`, ease: 'none' });
   });
 }
 
@@ -1051,13 +1048,17 @@ function initCobe() {
     const j = Math.floor(Math.random() * (i + 1));
     [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
   }
-  const arcs = [];
+  let arcs = [];
   for (let i = 0; i + 1 < shuffled.length; i += 2) {
     arcs.push({
       from: shuffled[i].location,
       to: shuffled[i + 1].location,
       color: palette[Math.floor(Math.random() * palette.length)],
     });
+  }
+
+  if (isLightMode) {
+    arcs = undefined;
   }
 
   // --- Sizing -----------------------------------------------------------------
@@ -1067,7 +1068,7 @@ function initCobe() {
   // Push the globe down so only the upper "dome" sits in view — pair this with
   // your bottom gradient mask in CSS for the faded-horizon look.
   // CSS px — cobe multiplies the offset by devicePixelRatio internally.
-  const verticalOffset = () => height * 0.575;
+  const verticalOffset = () => height * (isLightMode ? 0.5 : 0.575);
 
   // Shared with the HTML overlay projection below, so the dots stay locked to the
   // rendered markers. Keep these in sync with the createGlobe options.
@@ -1133,9 +1134,9 @@ function initCobe() {
     mapBaseBrightness: 0,           // brightness of the OCEAN dots — 0 = only continents show on the solid fill
     baseColor: [0.09803921568627451, 0.09803921568627451, 0.09803921568627451],   // colour of the ocean dots (only shows if mapBaseBrightness > 0)
     landColor: [0.1, 0.1, 0.1],  // PATCHED option: colour of the COUNTRY dots, independent of baseColor
-    baseFill: isLightMode ? [0.9, 0.9, 0.9] : [0.09803921568627451, 0.09803921568627451, 0.09803921568627451],     // PATCHED option: solid sphere colour behind the dots (your old base grey)
+    baseFill: isLightMode ? [1, 1, 1] : [0.09803921568627451, 0.09803921568627451, 0.09803921568627451],     // PATCHED option: solid sphere colour behind the dots (your old base grey)
     markerColor: BLUE,              // fallback for markers without their own color
-    glowColor: isLightMode ? [0.9, 0.9, 0.9] : [0.09803921568627451, 0.09803921568627451, 0.09803921568627451], // atmosphere rim glow
+    glowColor: isLightMode ? [1, 1, 1] : [0.09803921568627451, 0.09803921568627451, 0.09803921568627451], // atmosphere rim glow
     arcColor: BLUE,                 // fallback for arcs without their own color
     arcWidth: 0.1,                  // thickness of the arc lines
     arcHeight: 0.33,                // how high the arcs bow off the surface
@@ -2166,13 +2167,13 @@ function initTabSystem() {
         outgoingVisual?.classList.remove("active");
         tl.set(outgoingBar, { transformOrigin: "right center" })
           .to(outgoingBar, { scaleX: 0, duration: 0.3 }, 0)
-          .to(outgoingVisual, { autoAlpha: 0, yPercent: -5, }, 0)
+          .to(outgoingVisual, { autoAlpha: 1, yPercent: 0, }, 0)
           .to(outgoingContent.querySelector('[data-tabs="item-details"]'), { height: 0 }, 0);
       }
 
       incomingContent.classList.add("active");
       incomingVisual.classList.add("active");
-      tl.fromTo(incomingVisual, { autoAlpha: 0, yPercent: 5, }, { autoAlpha: 1, yPercent: 0, }, 0.1)
+      tl.fromTo(incomingVisual, { autoAlpha: 1, yPercent: 0, }, { autoAlpha: 1, yPercent: 0, }, 0.1)
         .fromTo( incomingContent.querySelector('[data-tabs="item-details"]'),{ height: 0 },{ height: "auto" },0)
         .set(incomingBar, { scaleX: 0, transformOrigin: "left center" }, 0);
     }
@@ -2718,7 +2719,7 @@ function initSmooothy() {
 }
 
 function initCopyEmailClipboard() {
-  const buttons = document.querySelectorAll('.copy-email-button');
+  const buttons = document.querySelectorAll('[data-copy-button]');
   if (!buttons.length) return;
 
   const copyEmail = (button) => {
