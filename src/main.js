@@ -1656,6 +1656,7 @@ function initSwipers() {
           navigation: {
             nextEl: swiperNext,
             prevEl: swiperPrev,
+            disabledClass: "is-disabled",
           },
           mousewheel: {
             forceToAxis: true,
