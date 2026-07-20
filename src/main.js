@@ -2772,6 +2772,208 @@ function initCopyEmailClipboard() {
   });
 }
 
+function initModalBasic() {
+
+  const modalGroup = document.querySelector('[data-modal-group-status]');
+  const modals = document.querySelectorAll('[data-modal-name]');
+  const modalTargets = document.querySelectorAll('[data-modal-target]');
+
+  // Elements that can receive keyboard focus inside an open modal
+  const FOCUSABLE_SELECTOR =
+    'a[href], area[href], button:not([disabled]), input:not([disabled]), ' +
+    'select:not([disabled]), textarea:not([disabled]), iframe, audio[controls], ' +
+    'video[controls], [contenteditable]:not([contenteditable="false"]), ' +
+    '[tabindex]:not([tabindex="-1"])';
+
+  const isNativeControl = (el) => {
+    const tag = el.tagName.toLowerCase();
+    return tag === 'button' || (tag === 'a' && el.hasAttribute('href'));
+  };
+
+  const getFocusable = (container) =>
+    Array.from(container.querySelectorAll(FOCUSABLE_SELECTOR)).filter(
+      (el) => el.offsetParent !== null || el === container
+    );
+
+  // Track open state so focus can be restored to the trigger on close
+  let activeModal = null;
+  let lastTrigger = null;
+
+  // --- Scroll lock (Lenis is currently disabled, so a plain overflow lock is
+  // enough; compensate for the scrollbar width to avoid a layout shift) ---
+  let scrollLocked = false;
+  const lockScroll = () => {
+    if (scrollLocked) return;
+    scrollLocked = true;
+    const scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+    document.documentElement.style.overflow = 'hidden';
+    if (scrollbarWidth > 0) document.body.style.paddingRight = `${scrollbarWidth}px`;
+  };
+  const unlockScroll = () => {
+    if (!scrollLocked) return;
+    scrollLocked = false;
+    document.documentElement.style.overflow = '';
+    document.body.style.paddingRight = '';
+  };
+
+  // --- One-time ARIA wiring ---
+  const nameToId = new Map();
+
+  modals.forEach((modal, i) => {
+    const name = modal.getAttribute('data-modal-name');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    // Programmatic focus target when the modal has no focusable children
+    if (!modal.hasAttribute('tabindex')) modal.setAttribute('tabindex', '-1');
+    // Accessible name from the data-modal-name value (don't clobber existing)
+    if (name && !modal.hasAttribute('aria-label') && !modal.hasAttribute('aria-labelledby')) {
+      modal.setAttribute('aria-label', name);
+    }
+    // Ensure a unique id so triggers can point aria-controls at it
+    if (!modal.id) {
+      const base = 'modal-' + (name ? name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '-') : i);
+      let id = base;
+      let n = 1;
+      while (document.getElementById(id)) id = `${base}-${n++}`;
+      modal.id = id;
+    }
+    if (name) nameToId.set(name, modal.id);
+  });
+
+  modalTargets.forEach((trigger) => {
+    const name = trigger.getAttribute('data-modal-target');
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.setAttribute('aria-expanded', 'false');
+    const id = nameToId.get(name);
+    if (id) trigger.setAttribute('aria-controls', id);
+    // Make non-native triggers behave like buttons for AT + keyboard
+    if (!isNativeControl(trigger)) {
+      if (!trigger.hasAttribute('role')) trigger.setAttribute('role', 'button');
+      if (!trigger.hasAttribute('tabindex')) trigger.setAttribute('tabindex', '0');
+    }
+  });
+
+  // --- Open / close ---
+  function openModal(name, trigger) {
+    const modal = document.querySelector(`[data-modal-name="${name}"]`);
+    if (!modal) return;
+
+    // Reset everything first
+    modalTargets.forEach((target) => {
+      target.setAttribute('data-modal-status', 'not-active');
+      target.setAttribute('aria-expanded', 'false');
+    });
+    modals.forEach((m) => m.setAttribute('data-modal-status', 'not-active'));
+
+    // Activate the matching trigger(s) + modal
+    document.querySelectorAll(`[data-modal-target="${name}"]`).forEach((t) => {
+      t.setAttribute('data-modal-status', 'active');
+      t.setAttribute('aria-expanded', 'true');
+    });
+    modal.setAttribute('data-modal-status', 'active');
+
+    if (modalGroup) modalGroup.setAttribute('data-modal-group-status', 'active');
+
+    lockScroll();
+    activeModal = modal;
+    lastTrigger = trigger || document.querySelector(`[data-modal-target="${name}"]`);
+
+    // Move focus into the modal
+    const focusable = getFocusable(modal);
+    (focusable[0] || modal).focus();
+  }
+
+  function closeAllModals() {
+    if (!activeModal) return;
+
+    modalTargets.forEach((target) => {
+      target.setAttribute('data-modal-status', 'not-active');
+      target.setAttribute('aria-expanded', 'false');
+    });
+    modals.forEach((m) => m.setAttribute('data-modal-status', 'not-active'));
+    if (modalGroup) modalGroup.setAttribute('data-modal-group-status', 'not-active');
+
+    unlockScroll();
+
+    const returnTo = lastTrigger;
+    activeModal = null;
+    lastTrigger = null;
+
+    // Restore focus to the element that opened the modal
+    if (returnTo && typeof returnTo.focus === 'function') returnTo.focus();
+  }
+
+  // Open modal (click + keyboard for non-native triggers)
+  modalTargets.forEach((trigger) => {
+    const name = trigger.getAttribute('data-modal-target');
+    trigger.addEventListener('click', () => openModal(name, trigger));
+    trigger.addEventListener('keydown', (event) => {
+      if (isNativeControl(trigger)) return; // native buttons/links handle this
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+        event.preventDefault();
+        openModal(name, trigger);
+      }
+    });
+  });
+
+  // Close buttons (click + keyboard + accessible name for icon-only buttons)
+  document.querySelectorAll('[data-modal-close]').forEach((closeBtn) => {
+    if (!isNativeControl(closeBtn)) {
+      if (!closeBtn.hasAttribute('role')) closeBtn.setAttribute('role', 'button');
+      if (!closeBtn.hasAttribute('tabindex')) closeBtn.setAttribute('tabindex', '0');
+    }
+    if (!closeBtn.getAttribute('aria-label') && !closeBtn.textContent.trim()) {
+      closeBtn.setAttribute('aria-label', 'Close modal');
+    }
+    closeBtn.addEventListener('click', closeAllModals);
+    closeBtn.addEventListener('keydown', (event) => {
+      if (isNativeControl(closeBtn)) return;
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+        event.preventDefault();
+        closeAllModals();
+      }
+    });
+  });
+
+  // Close when clicking the backdrop (the group wrapper itself, not its contents)
+  if (modalGroup) {
+    modalGroup.addEventListener('click', (event) => {
+      if (activeModal && event.target === modalGroup) closeAllModals();
+    });
+  }
+
+  // Global key handling: Escape to close + Tab focus trap within the open modal
+  document.addEventListener('keydown', (event) => {
+    if (!activeModal) return;
+
+    if (event.key === 'Escape') {
+      closeAllModals();
+      return;
+    }
+
+    if (event.key !== 'Tab') return;
+
+    const focusable = getFocusable(activeModal);
+    if (!focusable.length) {
+      event.preventDefault();
+      activeModal.focus();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const current = document.activeElement;
+
+    if (event.shiftKey && (current === first || current === activeModal)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && current === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+}
+
 
 document.addEventListener('DOMContentLoaded', () => {
   // visual, font-independent — run immediately
@@ -2785,10 +2987,12 @@ document.addEventListener('DOMContentLoaded', () => {
   initCobe();
   initSwipers();
   initGlobalParallax();
-    initTabSystem();
-    initAnimatedBackground();
-      initToggleSwitches();
-        initCopyEmailClipboard();
+  initTabSystem();
+  initAnimatedBackground();
+  initToggleSwitches();
+  initCopyEmailClipboard();
+  initModalBasic();
+
 
 
 
