@@ -1324,7 +1324,10 @@ function initTextSplit() {
   function handleSplit(el, self) {
     const prev = animMap.get(el);
     if (prev) prev.forEach((anim) => anim.kill());
-    animMap.set(el, []);
+    // animMap.set(el, []);
+
+    const anims = [];
+    animMap.set(el, anims);
 
     el.dispatchEvent(
       new CustomEvent("splitReady", {
@@ -1333,11 +1336,18 @@ function initTextSplit() {
           words: self.words,
           chars: self.chars,
           register(anim) {
-            animMap.get(el)?.push(anim);
+            // animMap.get(el)?.push(anim);
+            anims.push(anim)
           },
         },
       })
     );
+
+    if (!anims.length) return;
+    if (anims.length === 1) return anims[0];
+    const tl = gsap.timeline();
+    anims.forEach((a) => tl.add(a, 0));
+    return tl;
   }
 
   const splitConfig = {
@@ -1376,7 +1386,7 @@ function initTextSplit() {
       SplitText.create(target, {
         ...config,
         onSplit(self) {
-          handleSplit(el, self);
+          return handleSplit(el, self);
         },
       });
     });
