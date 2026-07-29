@@ -1653,10 +1653,9 @@ function initGlobalParallax() {
     }
 	
 function initSwipers() {
-      $("[data-swiper=case-studies]").each(function() {
-        const swiperTarget = $(this)[0];
-        const swiperNext = $("[data-swiper-next=case-studies]")[0];
-        const swiperPrev = $("[data-swiper-prev=case-studies]")[0];
+      document.querySelectorAll("[data-swiper=case-studies]").forEach((swiperTarget) => {
+        const swiperNext = document.querySelector("[data-swiper-next=case-studies]");
+        const swiperPrev = document.querySelector("[data-swiper-prev=case-studies]");
 
         const swiper = new Swiper(swiperTarget, {
           modules: [Navigation],
@@ -1721,9 +1720,8 @@ function initSwipers() {
 
   var targets = [];
 
-  $("[data-mouse-move-strength]").each(function () {
-    var el = $(this)[0];
-    var strength = parseFloat($(this).attr("data-mouse-move-strength")) || 0;
+  document.querySelectorAll("[data-mouse-move-strength]").forEach(function (el) {
+    var strength = parseFloat(el.getAttribute("data-mouse-move-strength")) || 0;
 
     targets.push({
       strength: strength,
@@ -1734,7 +1732,7 @@ function initSwipers() {
 
   if (!targets.length) return;
 
-  $(window).on("mousemove", function (e) {
+  window.addEventListener("mousemove", function (e) {
     // -1 … 1 from viewport center
     var nx = (e.clientX / window.innerWidth - 0.5) * 2;
     var ny = (e.clientY / window.innerHeight - 0.5) * 2;
@@ -2984,8 +2982,7 @@ function initModalBasic() {
   });
 }
 
-
-document.addEventListener('DOMContentLoaded', () => {
+ function init() {
   // visual, font-independent — run immediately
   initButton046();
   initMegaNavDirectionalHover();
@@ -3017,6 +3014,13 @@ document.addEventListener('DOMContentLoaded', () => {
   //   .load('1em Labgrotesque')
   //   .then(startTextAnimations)
   //   .catch(startTextAnimations);
-});
+}
+
+if (document.readyState === 'loading')
+  {
+    addEventListener('DOMContentLoaded', init)
+  } else {
+    init()
+  }
   
 
