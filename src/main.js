@@ -356,7 +356,7 @@ function initButton046() {
   initMediaSetup._cleanup = cleanupFns;
 }
 
-  function initMarqueeScrollDirection() {
+function initMarqueeScrollDirection() {
   document.querySelectorAll('[data-marquee-scroll-direction-target]').forEach((marquee) => {
     // Query marquee elements
     const marqueeContent = marquee.querySelector('[data-marquee-collection-target]');
@@ -382,6 +382,16 @@ function initButton046() {
       }
       marqueeScroll.appendChild(fragment);
     }
+
+    // Restore any logo images the consent blocker parked before we cloned them.
+    // It moves the real URL into data-cookieblock-src and only restores src on the
+    // original nodes it scanned — never on our clones — so copy it back on any img
+    // that's still missing a src. First-party logos, so no consent concern.
+    marquee.querySelectorAll('img[data-cookieblock-src]').forEach((img) => {
+      if (!img.getAttribute('src')) {
+        img.setAttribute('src', img.getAttribute('data-cookieblock-src'));
+      }
+    });
 
     // GSAP animation for marquee content
     const marqueeItems = marquee.querySelectorAll('[data-marquee-collection-target]');
