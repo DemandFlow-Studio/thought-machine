@@ -5,7 +5,7 @@ import { SplitText } from 'gsap/all';
 import Lenis from 'lenis';
 import createGlobe from './lib/cobe-custom.js';
 import Swiper from 'swiper';
-import { Navigation, Scrollbar } from 'swiper/modules';
+import { Navigation, Scrollbar, Keyboard, Mousewheel } from 'swiper/modules';
 import 'swiper/css';
 import Core from "smooothy";
 
@@ -2088,6 +2088,30 @@ function initSwipers() {
           scrollbar: {
             el: swiperScroll,
             draggable: true,
+          },
+          mousewheel: {
+            forceToAxis: true,
+          },
+          a11y: {
+            enabled: true,
+            slideRole: 'listitem'
+          },
+        })
+
+      })
+
+      const swiperCaseStudiesCarousel = document.querySelectorAll("[data-swiper=case-studies-carousel]");
+      swiperCaseStudiesCarousel.forEach((swiperEl) => {
+        const swiper = new Swiper(swiperEl, {
+          modules: [Keyboard, Mousewheel],
+          speed: 600,
+          spaceBetween: 0,
+          slidesPerView: 2.25,
+          centeredSlides: true,
+          loop: true,
+          grabCursor: true,
+          keyboard: {
+            enabled: true,
           },
           mousewheel: {
             forceToAxis: true,
