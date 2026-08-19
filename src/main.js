@@ -2250,10 +2250,15 @@ function initSwipers() {
           modules: [Keyboard, Mousewheel],
           speed: 600,
           spaceBetween: 0,
-          slidesPerView: 2.25,
+          slidesPerView: 1,
           centeredSlides: true,
           loop: true,
           grabCursor: true,
+          breakpoints: {
+            1024: {
+              slidesPerView: 2.25,
+            }
+          },
           keyboard: {
             enabled: true,
           },
