@@ -1940,7 +1940,7 @@ const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;    el.ad
     const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;
     gsap.from(el, {
       opacity: 0,
-      duration: 1,
+      duration: 1.5,
       ease: "expo.out",
       delay: globalLoadDelay + delay,
     })
@@ -1963,7 +1963,7 @@ const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;    el.ad
     gsap.from(el, {
       opacity: 0,
       yPercent: 50,
-      duration: 1,
+      duration: 1.25,
       ease: "power3.out",
       delay: globalLoadDelay + delay,
     })
