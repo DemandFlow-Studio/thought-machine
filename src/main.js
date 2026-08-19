@@ -1478,7 +1478,7 @@ function makeHeroArcPoints({
 // segment count and bow height are the hero's to change.
 // segments: more = smoother fade, more draw instances per arc.
 // height:   apex lift of the path, in cobe's units (its own `arcHeight` scale).
-function buildHeroArcs(pairs, { segments = 16, height = 0.33, elevation = 0 } = {}) {
+function buildHeroArcs(pairs, { segments = 16, height = 0.25, elevation = 0 } = {}) {
   const pointAt = (a, b, t) => {
     const d = slerpDir(a, b, t);
     const r = GLOBE_RADIUS + elevation + height * 0.5 * Math.sin(Math.PI * t);
@@ -1514,7 +1514,7 @@ function initHomeCobe() {
 
   // Skip on mobile (run on tablet and up). 768px is Webflow's tablet breakpoint —
   // mobile landscape tops out at 767px, so < 768 = phone.
-  // if (window.innerWidth < 768) return;
+  if (window.innerWidth < 768) return;
 
   // Cap DPR at 2 — anything higher just burns GPU with no visible gain
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1567,7 +1567,7 @@ function initHomeCobe() {
   //   tumble end over end       → rate on `theta`
   //   roll in the picture plane → rate on `gamma`
   // Rates can be combined; the sum is what you see.
-  const REST = { phi: 0, theta: -0.125, gamma: 0.125 };
+  const REST = { phi: -2.5, theta: -0.125, gamma: 0.125 };
   const AUTO_SPIN = { phi: 0.00125, theta: 0, gamma: 0 };  // radians per idle frame
   const DRAG = { phi: 1, theta: 0, gamma: 0 };             // share of the drag per angle
 
@@ -1965,6 +1965,18 @@ const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;    el.ad
       yPercent: 50,
       duration: 1.25,
       ease: "power3.out",
+      delay: globalLoadDelay + delay,
+    })
+  })
+
+  document.querySelectorAll("[data-anim-load=cobe]").forEach((el) => {
+    const delay = 0;
+    gsap.from(el, {
+      opacity: 0,
+      xPercent: 5,
+      scale: 1.25,
+      duration: 3,
+      ease: "expo.out",
       delay: globalLoadDelay + delay,
     })
   })
