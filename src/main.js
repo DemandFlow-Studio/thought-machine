@@ -1018,12 +1018,11 @@ function initMegaNavDirectionalHover() {
 }
 
 
-// --- Shared globe helpers ----------------------------------------------------
-// Both globes below draw the same kind of point-to-point arc, so the geometry for
-// it lives here. cobe paints each arc in a single flat colour, so a blue→pink fade
-// can't be done with one arc; buildGradientArcs() draws every pair as a chain of
-// short arcs laid end to end along one lifted great-circle path, each a step
-// further along the ramp — read together they look like a single gradient arc.
+// --- Globe geometry (pure math) ----------------------------------------------
+// Projection and interpolation only — no globe settings live here, so nothing in
+// this block decides how any globe looks. Each globe owns its own point scatter
+// and arc builder further down, and those are deliberately not shared: retuning
+// one globe must never move the other.
 
 const GLOBE_RADIUS = 0.8;   // cobe's sphere radius, in its own world units
 
@@ -1060,9 +1059,18 @@ function mixColor(c1, c2, t) {
   ];
 }
 
+// --- Section globe arcs (initCobe only) --------------------------------------
+// cobe paints each arc in a single flat colour, so a blue→purple fade can't be
+// done with one arc; buildGradientArcs() draws every pair as a chain of short arcs
+// laid end to end along one lifted great-circle path, each a step further along
+// the ramp — read together they look like a single gradient arc. The hero globe
+// has its own pair of these (makeHeroArcPoints / buildHeroArcs) further down.
+
 // A dispersed, lightly-randomised set of points (regenerated on each load), paired
 // off into arcs. Latitudes are biased to the upper hemisphere since only the top of
-// the globe is in view, and longitudes are evenly spread + jittered so points don't
+// the section globe's dome is in view (the hero, which sits fully in frame, scatters
+// over the whole sphere instead — see makeHeroArcPoints), and longitudes are
+// evenly spread + jittered so points don't
 // cluster. `count` must be even — every dot gets exactly one arc (so none is left
 // unconnected) and the arcs don't chain through shared endpoints. One end of each
 // pair is colorA and the other colorB, so the arc fades between them and the HTML
@@ -1410,13 +1418,103 @@ function initCobe() {
 // The gradient lives in screen space (see landGradient in cobe-custom.js), so it
 // behaves like a gradient sitting BEHIND the globe that the dots mask, rather than
 // paint stuck to the map — the ramp stays put while the globe turns underneath it.
+// --- Hero globe arcs (initHomeCobe only) -------------------------------------
+// Deliberate copies of the section globe's two arc helpers, with the hero's own
+// defaults. Retune anything here and only the hero moves.
+
+// Points scattered over the WHOLE sphere rather than hugging the upper hemisphere:
+// the hero sits fully in frame, so its arcs should read as wrapping all the way
+// around it. Latitudes are sampled uniformly by AREA (pick sin(lat) flat, then
+// asin it back) — sampling the angle directly would crowd the poles — and
+// longitudes are fully random rather than evenly spaced, so the scatter looks
+// unplanned. Narrow latMin/latMax (or lngMin/lngMax) to pull the points into a band.
+// `count` must be even — every dot gets exactly one arc (so none is left
+// unconnected) and the arcs don't chain through shared endpoints. One end of each
+// pair is colorA and the other colorB, so the arc fades between them and the HTML
+// dots (which read marker.color) match the arc end they sit on.
+function makeHeroArcPoints({
+  count = 8,
+  colorA,
+  colorB,
+  latMin = -72,   // full sphere, minus the very poles where arcs get pinched
+  latMax = 72,
+  lngMin = -180,
+  lngMax = 180,
+  size = 0.05,
+  idPrefix = 'hero-pt',
+} = {}) {
+  const rand = (min, max) => min + Math.random() * (max - min);
+  const sinMin = Math.sin(latMin * Math.PI / 180);
+  const sinMax = Math.sin(latMax * Math.PI / 180);
+  const randLat = () => Math.asin(rand(sinMin, sinMax)) * 180 / Math.PI;
+
+  const markers = Array.from({ length: count }, (_, i) => ({
+    id: `${idPrefix}-${i}`,
+    location: [randLat(), rand(lngMin, lngMax)],
+    size,
+    color: colorA, // reassigned per pair below
+  }));
+
+  const shuffled = markers.slice();
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+
+  const pairs = [];
+  for (let i = 0; i + 1 < shuffled.length; i += 2) {
+    shuffled[i].color = colorA;
+    shuffled[i + 1].color = colorB;
+    pairs.push([shuffled[i], shuffled[i + 1]]);
+  }
+
+  return { markers, pairs };
+}
+
+// The hero's own gradient-arc chain: every pair drawn as a run of short arcs laid
+// end to end along one lifted great-circle path, each a step further along the
+// blue→pink ramp, because cobe paints a single arc in one flat colour. Same
+// construction as the section globe's buildGradientArcs(), kept separate so the
+// segment count and bow height are the hero's to change.
+// segments: more = smoother fade, more draw instances per arc.
+// height:   apex lift of the path, in cobe's units (its own `arcHeight` scale).
+function buildHeroArcs(pairs, { segments = 16, height = 0.33, elevation = 0 } = {}) {
+  const pointAt = (a, b, t) => {
+    const d = slerpDir(a, b, t);
+    const r = GLOBE_RADIUS + elevation + height * 0.5 * Math.sin(Math.PI * t);
+    return [d[0] * r, d[1] * r, d[2] * r];
+  };
+
+  const arcs = [];
+  for (const [fromM, toM] of pairs) {
+    const a = latLngToWorld(fromM.location);
+    const b = latLngToWorld(toM.location);
+    for (let i = 0; i < segments; i++) {
+      const t0 = i / segments;
+      const t1 = (i + 1) / segments;
+      const tm = (t0 + t1) / 2;
+      const mid = pointAt(a, b, tm);
+      arcs.push({
+        // PATCHED options: endpoints as world vectors (so a segment can start and
+        // end above the surface) plus a per-segment bow height, so the chain reads
+        // as one smooth curve rather than a row of scallops.
+        fromVec: pointAt(a, b, t0),
+        toVec: pointAt(a, b, t1),
+        height: Math.hypot(mid[0], mid[1], mid[2]) - GLOBE_RADIUS - elevation,
+        color: mixColor(fromM.color, toM.color, tm),
+      });
+    }
+  }
+  return arcs;
+}
+
 function initHomeCobe() {
   const canvas = document.querySelector('[data-hero-cobe-canvas]');
   if (!canvas) return;
 
   // Skip on mobile (run on tablet and up). 768px is Webflow's tablet breakpoint —
   // mobile landscape tops out at 767px, so < 768 = phone.
-  if (window.innerWidth < 768) return;
+  // if (window.innerWidth < 768) return;
 
   // Cap DPR at 2 — anything higher just burns GPU with no visible gain
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -1431,7 +1529,7 @@ function initHomeCobe() {
   // ramp into a narrower band, shorten it to spread the fade over more of the globe.
   const GRADIENT_AXIS = [1, 0.35];
 
-  const { markers, pairs } = makeArcPoints({ count: 8, colorA: BLUE, colorB: PINK, idPrefix: 'hero-pt' });
+  const { markers, pairs } = makeHeroArcPoints({ count: 12, colorA: BLUE, colorB: PINK });
 
   // --- Sizing -----------------------------------------------------------------
   let width = canvas.offsetWidth;
@@ -1452,22 +1550,42 @@ function initHomeCobe() {
   const scale = 1.5;
   const markerElevation = 0;
 
-  // Arcs bow off the surface and fade blue→pink along their length, same as the
-  // dark globe. Pass `arcs: undefined` below if the hero should be dots-only.
-  const arcs = buildGradientArcs(pairs, { elevation: markerElevation });
+  // Arcs bow off the surface and fade blue→pink along their length. Pass
+  // `arcs: undefined` below if the hero should be dots-only.
+  const arcs = buildHeroArcs(pairs, { elevation: markerElevation });
 
   // --- Rotation, drag & inertia -----------------------------------------------
-  // We render `phi`/`theta` but ease them toward `*Target` each frame, so dragging
-  // feels weighty rather than instantaneous. On release, `phiVel` carries the last
-  // drag speed and decays (momentum) before the idle auto-spin resumes.
-  let phi = 0;             // rendered azimuth (passed to the globe)
-  let phiTarget = 0;       // where drag / inertia wants phi to be
-  let phiVel = 0;          // angular velocity used for post-release momentum
-  const theta = -0.125;       // fixed tilt (dome framing) — dragging is horizontal-only
+  // The hero rotates on axes of its own choosing. `gamma` is a PATCHED third angle
+  // (see cobe-custom.js): a roll about the SCREEN's z-axis, applied after phi and
+  // theta, so the pole — and with it the axis the globe visibly turns around — can
+  // be tilted off vertical, which phi/theta alone can't do.
+  //
+  // REST is the pose the globe sits in before anything moves it. AUTO_SPIN is how
+  // far each angle advances per idle frame, and DRAG is the share of a drag each
+  // angle takes, so the spin axis and the drag axis are set independently:
+  //   spin around a tilted axis → rate on `phi`, tilt via REST.gamma / REST.theta
+  //   tumble end over end       → rate on `theta`
+  //   roll in the picture plane → rate on `gamma`
+  // Rates can be combined; the sum is what you see.
+  const REST = { phi: 0, theta: -0.125, gamma: 0.125 };
+  const AUTO_SPIN = { phi: 0.00125, theta: 0, gamma: 0 };  // radians per idle frame
+  const DRAG = { phi: 1, theta: 0, gamma: 0 };             // share of the drag per angle
+
+  // One accumulator for the idle spin and one for the drag; both fan out onto the
+  // three angles through the weights above. `drag` eases toward `dragTarget` each
+  // frame so dragging feels weighty rather than instantaneous, and on release
+  // `dragVel` carries the last drag speed and decays before the spin resumes.
+  let spin = 0;            // idle frames accumulated
+  let drag = 0;            // rendered drag offset (radians)
+  let dragTarget = 0;      // where drag / inertia wants it to be
+  let dragVel = 0;         // angular velocity used for post-release momentum
   let pointerDown = false;
   let lastX = 0;
 
-  const autoSpeed = reduceMotion ? 0 : 0.00125; // idle auto-spin (radians/frame)
+  // Current value of one angle: rest pose + idle spin + drag.
+  const angleAt = (axis) => REST[axis] + spin * AUTO_SPIN[axis] + drag * DRAG[axis];
+
+  const autoSpin = reduceMotion ? 0 : 1;  // multiplier on AUTO_SPIN (0 = held still)
   const DRAG_SENS = 0.0025;   // radians of rotation per px dragged
   const SMOOTH = 0.06;        // 0..1 ease toward target each frame (higher = snappier)
   const FRICTION = 0.975;     // momentum decay per frame after release (lower = stops sooner)
@@ -1478,7 +1596,7 @@ function initHomeCobe() {
   const onPointerDown = (e) => {
     pointerDown = true;
     lastX = e.clientX;
-    phiVel = 0;            // cancel leftover momentum when grabbed
+    dragVel = 0;           // cancel leftover momentum when grabbed
     canvas.style.cursor = 'grabbing';
     canvas.setPointerCapture?.(e.pointerId);
   };
@@ -1487,8 +1605,8 @@ function initHomeCobe() {
     if (!pointerDown) return;
     const dx = e.clientX - lastX;     // horizontal drag only — vertical is ignored
     lastX = e.clientX;
-    phiTarget += dx * DRAG_SENS;
-    phiVel = dx * DRAG_SENS;          // last movement seeds the release momentum
+    dragTarget += dx * DRAG_SENS;
+    dragVel = dx * DRAG_SENS;         // last movement seeds the release momentum
   };
 
   const onPointerUp = () => {
@@ -1505,8 +1623,10 @@ function initHomeCobe() {
     devicePixelRatio: dpr,          // backing-store density; capped at 2 above
     width,                          // CSS px — cobe multiplies by devicePixelRatio
     height,                         // internally (passing width*dpr here would render at dpr²)
-    phi: 0,                         // start azimuth; driven by the render loop after
-    theta,                          // start tilt (vertical angle)
+    phi: REST.phi,                  // start angles; the render loop drives them after
+    theta: REST.theta,              // tilt (vertical angle)
+    gamma: REST.gamma,              // PATCHED option: roll about the screen's z-axis,
+                                    // applied after phi/theta — tilts the spin axis
     dark: 0,                        // ignored while dotMix is 1 — the dots here are
                                     // neither lit nor unlit, they're painted on top
     dotMix: 1,                      // PATCHED option: paint the dots ONTO baseFill
@@ -1530,7 +1650,7 @@ function initHomeCobe() {
     arcColor: BLUE,                 // fallback for arcs without their own color
     arcWidth: 0.1,                  // thickness of the arc lines
     arcHeight: 0,                   // unused — each gradient segment carries its own
-                                    // `height` (see buildGradientArcs)
+                                    // `height` (see buildHeroArcs)
     markerElevation,                // how far markers float above the surface
     opacity: 1,                     // 0..1 — overall globe opacity
     scale,                          // zoom — larger fills more of the section
@@ -1602,7 +1722,7 @@ function initHomeCobe() {
 
   // Project [lat, lng] to {x, y} CSS px within the layer + a front/back factor,
   // matching cobe's shader so the dots stay locked onto the rendered markers.
-  const projectMarker = (loc) => {
+  const projectMarker = (loc, phi, theta, gamma) => {
     const latR = loc[0] * Math.PI / 180;
     const lngR = loc[1] * Math.PI / 180 - Math.PI;
     const cl = Math.cos(latR);
@@ -1616,9 +1736,15 @@ function initHomeCobe() {
     const ly = f * d * ax + c * ay - e * d * az;
     const lz = -f * c * ax + d * ay + e * c * az; // > 0 = front hemisphere
 
+    // Roll about the screen z-axis, matching the gamma the shaders apply after
+    // phi/theta. lz is left alone — a roll never moves a point front-to-back.
+    const gc = Math.cos(gamma), gs = Math.sin(gamma);
+    const rx = gc * lx - gs * ly;
+    const ry = gs * lx + gc * ly;
+
     const aspect = height / width;
-    const clipX = lx * aspect * scale + (horizontalOffset() * scale) / width;
-    const clipY = ly * scale - (verticalOffset() * scale) / height;
+    const clipX = rx * aspect * scale + (horizontalOffset() * scale) / width;
+    const clipY = ry * scale - (verticalOffset() * scale) / height;
 
     return {
       x: (clipX * 0.5 + 0.5) * width,
@@ -1628,8 +1754,10 @@ function initHomeCobe() {
   };
 
   const positionMarkers = () => {
+    // Read the angles once per frame rather than once per marker.
+    const phi = angleAt('phi'), theta = angleAt('theta'), gamma = angleAt('gamma');
     for (const { m, el } of markerEls) {
-      const p = projectMarker(m.location);
+      const p = projectMarker(m.location, phi, theta, gamma);
       el.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) translate(-50%, -50%)`;
       el.style.opacity = p.visible;
       el.style.setProperty('--cobe-visible', p.visible.toFixed(3));
@@ -1654,19 +1782,23 @@ function initHomeCobe() {
 
   const render = () => {
     if (pointerDown) {
-      // While dragging, phiTarget/thetaTarget follow the pointer (see onPointerMove).
-    } else if (Math.abs(phiVel) > 0.0001) {
-      phiTarget += phiVel;    // coast with momentum after release
-      phiVel *= FRICTION;
+      // While dragging, dragTarget follows the pointer (see onPointerMove).
+    } else if (Math.abs(dragVel) > 0.0001) {
+      dragTarget += dragVel;  // coast with momentum after release
+      dragVel *= FRICTION;
     } else {
-      phiVel = 0;
-      phiTarget += autoSpeed; // resume idle auto-spin once momentum settles
+      dragVel = 0;
+      spin += autoSpin;       // resume idle auto-spin once momentum settles
     }
 
-    // Ease the rendered angle toward its target for a smooth, weighty feel.
-    phi += (phiTarget - phi) * SMOOTH;
+    // Ease the rendered drag offset toward its target for a weighty feel.
+    drag += (dragTarget - drag) * SMOOTH;
 
-    globe.update({ phi, theta });
+    globe.update({
+      phi: angleAt('phi'),
+      theta: angleAt('theta'),
+      gamma: angleAt('gamma'),
+    });
     positionMarkers();          // keep HTML overlays locked to the markers
     rafId = requestAnimationFrame(render);
   };
