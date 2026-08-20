@@ -1541,7 +1541,19 @@ function initHomeCobe() {
   // globeOffset() is the single source of truth for where the globe sits: the
   // createGlobe call, the resize handler and the HTML dot projection all read it,
   // so changing it here moves the canvas globe and its dots together.
-  const horizontalOffset = () => width / 2.125;
+  // The horizontal push is a *fraction* of the width, so a flat `width / 3` shrinks
+  // in step with the canvas and the globe creeps back toward centre on narrow
+  // screens. Instead, ramp the fraction up as the canvas narrows: linear between
+  // the two anchors below, clamped flat outside them. Tune by editing the anchors —
+  // [canvas width in px, fraction of width to push by].
+  const OFFSET_WIDE = [1441, 1 / 3];   // roomy desktop: gentle push
+  const OFFSET_NARROW = [1280, 0.66];    // tablet: push harder to keep it off-centre
+  const horizontalOffset = () => {
+    const [wW, wF] = OFFSET_WIDE;
+    const [nW, nF] = OFFSET_NARROW;
+    const t = Math.max(0, Math.min(1, (wW - width) / (wW - nW)));  // 0 at wide, 1 at narrow
+    return width * (wF + (nF - wF) * t);
+  };
   const verticalOffset = () => height * 0.35;
   const globeOffset = () => [horizontalOffset(), verticalOffset()];
 
@@ -1567,7 +1579,7 @@ function initHomeCobe() {
   //   tumble end over end       → rate on `theta`
   //   roll in the picture plane → rate on `gamma`
   // Rates can be combined; the sum is what you see.
-  const REST = { phi: 3.5, theta: -0.125, gamma: 0.125 };
+  const REST = { phi: 3.5, theta: 0.125, gamma: 0.1 };
   const AUTO_SPIN = { phi: 0.00125, theta: 0, gamma: 0 };  // radians per idle frame
   const DRAG = { phi: 1, theta: 0, gamma: 0 };             // share of the drag per angle
 
