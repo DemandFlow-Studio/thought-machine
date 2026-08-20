@@ -1068,8 +1068,8 @@ function mixColor(c1, c2, t) {
 
 // A dispersed, lightly-randomised set of points (regenerated on each load), paired
 // off into arcs. Latitudes are biased to the upper hemisphere since only the top of
-// the section globe's dome is in view (the hero, which sits fully in frame, scatters
-// over the whole sphere instead — see makeHeroArcPoints), and longitudes are
+// the section globe's dome is in view (the hero, which sits fully in frame, uses a
+// fixed table of real cities instead — see HERO_ROUTES), and longitudes are
 // evenly spread + jittered so points don't
 // cluster. `count` must be even — every dot gets exactly one arc (so none is left
 // unconnected) and the arcs don't chain through shared endpoints. One end of each
@@ -1422,51 +1422,56 @@ function initCobe() {
 // Deliberate copies of the section globe's two arc helpers, with the hero's own
 // defaults. Retune anything here and only the hero moves.
 
-// Points scattered over the WHOLE sphere rather than hugging the upper hemisphere:
-// the hero sits fully in frame, so its arcs should read as wrapping all the way
-// around it. Latitudes are sampled uniformly by AREA (pick sin(lat) flat, then
-// asin it back) — sampling the angle directly would crowd the poles — and
-// longitudes are fully random rather than evenly spaced, so the scatter looks
-// unplanned. Narrow latMin/latMax (or lngMin/lngMax) to pull the points into a band.
-// `count` must be even — every dot gets exactly one arc (so none is left
-// unconnected) and the arcs don't chain through shared endpoints. One end of each
-// pair is colorA and the other colorB, so the arc fades between them and the HTML
-// dots (which read marker.color) match the arc end they sit on.
+// Fixed city-to-city routes, so every arc starts and ends on land. The earlier
+// version scattered points at random over the sphere, which put a good share of
+// them in open ocean; a hand-picked table costs nothing and reads deliberately —
+// the globe shows a network, not noise. Coordinates are [lat, lng] in degrees.
+//
+// Editing: add or remove whole routes here, that's it. Each route contributes one
+// arc and two dots, endpoints are unique across the table, and both ends of a
+// route should stay on land (check anything new on a map first). Every endpoint's
+// `id` doubles as its Webflow hook — place a [data-cobe-marker="london"] element in
+// the hero and the overlay adopts it instead of drawing a default dot.
+const HERO_ROUTES = [
+  // The named routes.
+  [['london',        51.51,   -0.13], ['bogota',        4.71,  -74.07]],
+  [['new-york',      40.71,  -74.01], ['dublin',       53.35,   -6.26]],
+  [['lisbon',        38.72,   -9.14], ['tel-aviv',     32.08,   34.78]],
+  // [['stockholm',     59.33,   18.07], ['kyiv',         50.45,   30.52]],
+  // Filler, chosen to spread the network across every longitude so the globe has
+  // arcs to show whichever face is turned toward the viewer.
+  [['san-francisco', 37.77, -122.42], ['tokyo',        35.68,  139.69]],
+  [['dubai',         25.20,   55.27], ['mumbai',       19.08,   72.88]],
+  [['singapore',      1.35,  103.82], ['sydney',      -33.87,  151.21]],
+  [['sao-paulo',    -23.55,  -46.63], ['cape-town',   -33.92,   18.42]],
+  [['vancouver',     49.28, -123.12], ['santiago',    -33.45,  -70.67]],
+  [['nairobi',       -1.29,   36.82], ['istanbul',     41.01,   28.98]],
+  [['mexico-city',   19.43,  -99.13], ['madrid',       40.42,   -3.70]],
+  [['shanghai',      31.23,  121.47], ['auckland',    -36.85,  174.76]],
+];
+
+// Turns the route table into the two shapes the rest of the hero wants: a flat
+// `markers` list (one dot per city, for the HTML overlay) and `pairs` (the routes,
+// for buildHeroArcs). One end of each pair is colorA and the other colorB, so the
+// arc fades between them and the dots match the arc end they sit on. The A/B ends
+// alternate per route so the fades don't all run the same way.
 function makeHeroArcPoints({
-  count = 8,
+  routes = HERO_ROUTES,
   colorA,
   colorB,
-  latMin = -72,   // full sphere, minus the very poles where arcs get pinched
-  latMax = 72,
-  lngMin = -180,
-  lngMax = 180,
   size = 0.05,
-  idPrefix = 'hero-pt',
 } = {}) {
-  const rand = (min, max) => min + Math.random() * (max - min);
-  const sinMin = Math.sin(latMin * Math.PI / 180);
-  const sinMax = Math.sin(latMax * Math.PI / 180);
-  const randLat = () => Math.asin(rand(sinMin, sinMax)) * 180 / Math.PI;
-
-  const markers = Array.from({ length: count }, (_, i) => ({
-    id: `${idPrefix}-${i}`,
-    location: [randLat(), rand(lngMin, lngMax)],
-    size,
-    color: colorA, // reassigned per pair below
-  }));
-
-  const shuffled = markers.slice();
-  for (let i = shuffled.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-  }
-
+  const markers = [];
   const pairs = [];
-  for (let i = 0; i + 1 < shuffled.length; i += 2) {
-    shuffled[i].color = colorA;
-    shuffled[i + 1].color = colorB;
-    pairs.push([shuffled[i], shuffled[i + 1]]);
-  }
+
+  routes.forEach(([from, to], i) => {
+    // Flip which end is blue on every other route.
+    const [cFrom, cTo] = i % 2 ? [colorB, colorA] : [colorA, colorB];
+    const a = { id: from[0], location: [from[1], from[2]], size, color: cFrom };
+    const b = { id: to[0],   location: [to[1],   to[2]],   size, color: cTo };
+    markers.push(a, b);
+    pairs.push([a, b]);
+  });
 
   return { markers, pairs };
 }
@@ -1478,7 +1483,7 @@ function makeHeroArcPoints({
 // segment count and bow height are the hero's to change.
 // segments: more = smoother fade, more draw instances per arc.
 // height:   apex lift of the path, in cobe's units (its own `arcHeight` scale).
-function buildHeroArcs(pairs, { segments = 16, height = 0.25, elevation = 0 } = {}) {
+function buildHeroArcs(pairs, { segments = 16, height = 0.275, elevation = 0 } = {}) {
   const pointAt = (a, b, t) => {
     const d = slerpDir(a, b, t);
     const r = GLOBE_RADIUS + elevation + height * 0.5 * Math.sin(Math.PI * t);
@@ -1529,7 +1534,7 @@ function initHomeCobe() {
   // ramp into a narrower band, shorten it to spread the fade over more of the globe.
   const GRADIENT_AXIS = [1, 0.35];
 
-  const { markers, pairs } = makeHeroArcPoints({ count: 16, colorA: BLUE, colorB: PINK });
+  const { markers, pairs } = makeHeroArcPoints({ colorA: BLUE, colorB: PINK });
 
   // --- Sizing -----------------------------------------------------------------
   let width = canvas.offsetWidth;
@@ -1648,6 +1653,13 @@ function initHomeCobe() {
                                     // dark:0 subtracts (blue would come out orange).
     diffuse: 0.2,                   // 0..~2 — directional shading; also fades the dots
                                     // out toward the limb, so the sphere reads round
+    shading: 0.25,                  // PATCHED option: centre-to-limb falloff exponent,
+                                    // on BOTH the white baseFill and the dots. cobe
+                                    // hardcodes 0.4, which greys the globe off-centre
+                                    // and mutes the gradient with it. 0.15 keeps the
+                                    // fill near-white and the dots saturated most of
+                                    // the way out, with just enough falloff at the
+                                    // limb to still read as a sphere. 0 = dead flat.
     mapSamples: 18000,              // number of dots sampled across the map (density)
     mapBrightness: 6,               // in dotMix mode this is how far each dot spreads
                                     // before it saturates — i.e. the dot size
