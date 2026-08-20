@@ -1529,7 +1529,7 @@ function initHomeCobe() {
   // ramp into a narrower band, shorten it to spread the fade over more of the globe.
   const GRADIENT_AXIS = [1, 0.35];
 
-  const { markers, pairs } = makeHeroArcPoints({ count: 12, colorA: BLUE, colorB: PINK });
+  const { markers, pairs } = makeHeroArcPoints({ count: 16, colorA: BLUE, colorB: PINK });
 
   // --- Sizing -----------------------------------------------------------------
   let width = canvas.offsetWidth;
@@ -1541,13 +1541,13 @@ function initHomeCobe() {
   // globeOffset() is the single source of truth for where the globe sits: the
   // createGlobe call, the resize handler and the HTML dot projection all read it,
   // so changing it here moves the canvas globe and its dots together.
-  const horizontalOffset = () => width / 2;
-  const verticalOffset = () => height * 0.5;
+  const horizontalOffset = () => width / 2.125;
+  const verticalOffset = () => height * 0.35;
   const globeOffset = () => [horizontalOffset(), verticalOffset()];
 
   // Shared with the HTML overlay projection below, so the dots stay locked to the
   // rendered markers. Keep these in sync with the createGlobe options.
-  const scale = 1.5;
+  const scale = 1.575;
   const markerElevation = 0;
 
   // Arcs bow off the surface and fade blue→pink along their length. Pass
@@ -1567,7 +1567,7 @@ function initHomeCobe() {
   //   tumble end over end       → rate on `theta`
   //   roll in the picture plane → rate on `gamma`
   // Rates can be combined; the sum is what you see.
-  const REST = { phi: 0, theta: -0.125, gamma: 0.125 };
+  const REST = { phi: 3.5, theta: -0.125, gamma: 0.125 };
   const AUTO_SPIN = { phi: 0.00125, theta: 0, gamma: 0 };  // radians per idle frame
   const DRAG = { phi: 1, theta: 0, gamma: 0 };             // share of the drag per angle
 
@@ -1965,6 +1965,18 @@ const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;    el.ad
       yPercent: 50,
       duration: 1.25,
       ease: "power3.out",
+      delay: globalLoadDelay + delay,
+    })
+  })
+
+  document.querySelectorAll("[data-anim-load=cobe]").forEach((el) => {
+    const delay = parseFloat(el.getAttribute("data-anim-load-delay")) || 0;
+    gsap.from(el, {
+      opacity: 0,
+      xPercent: 15,
+      duration: 1.875,
+      scale: 1.125,
+      ease: "expo.out",
       delay: globalLoadDelay + delay,
     })
   })
