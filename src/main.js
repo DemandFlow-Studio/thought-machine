@@ -3570,6 +3570,211 @@ function initModalBasic() {
   });
 }
 
+// --- Rich text quotations ----------------------------------------------------
+// Clamps the first paragraph of a Webflow rich text to N lines and wraps it in
+// quotation marks, with the ellipsis and the closing quote sitting inside the
+// last line, right after the text.
+//
+// CSS can't do this: -webkit-line-clamp gives the 3-line cut and an ellipsis,
+// but that ellipsis is painted by the browser at the clip edge, so nothing can
+// follow it — a closing quote either lands on the clipped 4th line or is cut
+// away with it. So we measure instead. The ellipsis and closing quote are put
+// into the flow first, then the text is bracketed down to the longest slice
+// whose paragraph still fits N line boxes; whatever survives is by definition a
+// 3-line block ending in `text…"`.
+//
+// Markup written into the <p> (styling hooks — no whitespace between the spans,
+// so the glyphs sit tight against the text):
+//   <span data-quotation-mark="open">"</span>
+//   <span data-quotation-text>…clamped text…</span>
+//   <span data-quotation-ellipsis>…</span>     (hidden when nothing was cut)
+//   <span data-quotation-mark="close">"</span>
+//
+// Inline markup inside the paragraph (bold, links) is flattened to text — the
+// slice point can land anywhere, and rebuilding partial inline nodes isn't
+// worth it for prose quotes. Anything after that first paragraph — further
+// paragraphs, an empty <p>, a stray &nbsp; — is removed outright.
+//
+// 3 lines by default; data-quotation-lines="2" on the target overrides it.
+function initRichQuotations() {
+  const targets = document.querySelectorAll('[data-quotation-target]');
+  if (!targets.length) return;
+
+  const OPEN_MARK = '"';
+  const CLOSE_MARK = '"';
+  const ELLIPSIS = '…';
+  const DEFAULT_LINES = 3;
+
+  // Per-paragraph state. The full string has to be kept: every re-measure
+  // (resize, reveal, font swap) must start from the original text, not from the
+  // truncation the previous pass left in the DOM. lastWidth is the loop guard —
+  // see the ResizeObserver below.
+  const state = new WeakMap();
+
+  const el = (tag, attr, value, text) => {
+    const node = document.createElement(tag);
+    node.setAttribute(attr, value);
+    if (text) node.textContent = text;
+    return node;
+  };
+
+  // Replace the paragraph's contents with the four spans, once per paragraph.
+  const build = (p) => {
+    const source = p.textContent.replace(/\s+/g, ' ').trim();
+    const parts = {
+      source,
+      text: el('span', 'data-quotation-text', ''),
+      ellipsis: el('span', 'data-quotation-ellipsis', '', ELLIPSIS),
+      lastWidth: -1,
+    };
+
+    parts.text.textContent = source;
+    parts.ellipsis.style.display = 'none';
+
+    p.textContent = '';
+    p.append(
+      el('span', 'data-quotation-mark', 'open', OPEN_MARK),
+      parts.text,
+      parts.ellipsis,
+      el('span', 'data-quotation-mark', 'close', CLOSE_MARK)
+    );
+
+    // A line-clamp left on the paragraph in Webflow would cap the height we
+    // read, making every measurement below agree that everything fits.
+    if (getComputedStyle(p).webkitLineClamp !== 'none') {
+      p.style.webkitLineClamp = 'unset';
+      p.style.display = 'block';
+      p.style.overflow = 'visible';
+    }
+
+    state.set(p, parts);
+    return parts;
+  };
+
+  // One line box, measured on the paragraph itself rather than derived from
+  // computed line-height: that value can be `normal`, and this way padding,
+  // borders and font fallbacks all land in the number. Two probes (one line,
+  // two lines) give both the baseline height and the per-line step, so the
+  // target height stays correct whatever box model the paragraph has.
+  const measureMaxHeight = (p, parts, lines) => {
+    const ellipsisDisplay = parts.ellipsis.style.display;
+    parts.ellipsis.style.display = 'none';
+
+    parts.text.textContent = 'A';
+    const one = p.getBoundingClientRect().height;
+    parts.text.innerHTML = 'A<br>A';
+    const two = p.getBoundingClientRect().height;
+
+    parts.ellipsis.style.display = ellipsisDisplay;
+
+    const step = two - one > 0 ? two - one : one;
+    return one + (lines - 1) * step;
+  };
+
+  const clamp = (p) => {
+    const parts = state.get(p) || build(p);
+    const width = p.getBoundingClientRect().width;
+
+    // Hidden (closed tab, inactive slide, display:none parent): nothing to
+    // measure. The observer fires again when it gets a box.
+    if (!width) return;
+    parts.lastWidth = width;
+
+    const target = p.closest('[data-quotation-target]') || p;
+    const attr = parseInt(target.getAttribute('data-quotation-lines'), 10);
+    const lines = attr > 0 ? attr : DEFAULT_LINES;
+
+    const maxHeight = measureMaxHeight(p, parts, lines);
+    // Sub-pixel line box heights mean the exact sum is never quite reached.
+    const fits = () => p.getBoundingClientRect().height <= maxHeight + 1;
+
+    parts.ellipsis.style.display = 'none';
+    parts.text.textContent = parts.source;
+    if (fits()) return;
+
+    // The ellipsis and closing quote stay in the flow for the whole search, so
+    // the slice we settle on is one that fits *with* them, not one that
+    // overflows the moment they're appended.
+    parts.ellipsis.style.display = '';
+
+    let low = 0;
+    let high = parts.source.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      parts.text.textContent = parts.source.slice(0, mid).trimEnd();
+      if (fits()) low = mid;
+      else high = mid - 1;
+    }
+
+    // The character-level result can sit mid-word — pull back to the last word
+    // boundary, then drop trailing punctuation so the ellipsis doesn't read as
+    // `word,…`. Both edits only shorten the string, so the fit still holds.
+    let clamped = parts.source.slice(0, low);
+    const lastSpace = clamped.lastIndexOf(' ');
+    if (low < parts.source.length && lastSpace > 0) clamped = clamped.slice(0, lastSpace);
+    parts.text.textContent = clamped.replace(/[\s,;:.!?…"'‘’“”–—-]+$/, '');
+  };
+
+  const pending = new Set();
+  let frame = null;
+  const scheduleClamp = (p) => {
+    pending.add(p);
+    if (frame) return;
+    frame = requestAnimationFrame(() => {
+      frame = null;
+      const queue = [...pending];
+      pending.clear();
+      queue.forEach(clamp);
+    });
+  };
+
+  // Watch the paragraph, not the window: rich text inside sliders, tabs and
+  // grids gets resized plenty of times without a window resize event.
+  const observer = new ResizeObserver((entries) => {
+    entries.forEach((entry) => {
+      const parts = state.get(entry.target);
+      // Truncating changes the paragraph's height, which re-fires the observer.
+      // Only a width change can move where the text wraps, so anything else is
+      // our own echo and gets dropped here.
+      if (parts && parts.lastWidth === entry.target.getBoundingClientRect().width) return;
+      scheduleClamp(entry.target);
+    });
+  });
+
+  // Webflow rich text routinely leaves more behind the first paragraph — further
+  // paragraphs, an empty <p>, a stray &nbsp; text node. Only the first paragraph
+  // is quoted, so everything after it is dropped: left in place it would add
+  // height and whitespace below the three clamped lines. Walks up from the
+  // paragraph to the rich text element so trailing content nested in a wrapper
+  // goes too, not just direct siblings.
+  const stripAfter = (p, target) => {
+    let node = p;
+    while (node && node !== target) {
+      while (node.nextSibling) node.nextSibling.remove();
+      node = node.parentNode;
+    }
+  };
+
+  targets.forEach((target) => {
+    const p = target.querySelector('p');
+    if (!p || p.hasAttribute('data-quotation-initialized')) return;
+    p.setAttribute('data-quotation-initialized', '');
+    stripAfter(p, target);
+    build(p);
+    clamp(p);
+    observer.observe(p);
+  });
+
+  // Metrics shift when a webfont swaps in, so re-measure once it has. Resolves
+  // immediately if the fonts are already loaded.
+  document.fonts.ready.then(() => {
+    targets.forEach((target) => {
+      const p = target.querySelector('p');
+      if (p) scheduleClamp(p);
+    });
+  });
+}
+
  function init() {
   // visual, font-independent — run immediately
   initButton046();
@@ -3597,7 +3802,8 @@ function initModalBasic() {
     initScrollAnimations();  // non-split scroll fades
     initSmooothy();
     initLoadAnimations();
-    initTextSplit();})
+    initTextSplit();
+    initRichQuotations();})
 
   // document.fonts
   //   .load('1em Labgrotesque')
