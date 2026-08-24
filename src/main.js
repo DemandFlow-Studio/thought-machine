@@ -2211,6 +2211,48 @@ function initGlobalParallax() {
   )
     }
 	
+// Native Webflow YouTube embeds omit enablejsapi, so the player ignores postMessage
+// until it's added. With it, play/pause needs no YT IFrame API script.
+const youtubePlayers = []
+
+function ytCommand(iframe, func) {
+  iframe.contentWindow?.postMessage(
+    JSON.stringify({ event: 'command', func, args: [] }),
+    '*'
+  )
+}
+
+function initYoutubePlayer() {
+  document.querySelectorAll('[data-youtube-init]').forEach((wrap) => {
+    const iframe = wrap.querySelector('iframe')
+    if (!iframe || !iframe.getAttribute('src')) return
+
+    const url = new URL(iframe.src, location.href)
+    if (url.searchParams.get('enablejsapi') !== '1') {
+      url.searchParams.set('enablejsapi', '1')
+      url.searchParams.set('playsinline', '1')
+      iframe.src = url.toString()
+    }
+
+    const overlay = wrap.querySelector('[data-youtube-overlay]')
+    youtubePlayers.push({ iframe, overlay })
+
+    wrap.querySelectorAll('[data-youtube-play]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        ytCommand(iframe, 'playVideo')
+        if (overlay) gsap.to(overlay, { autoAlpha: 0, duration: 0.4, ease: 'power2.out' })
+      })
+    })
+  })
+}
+
+function pauseAllYoutube() {
+  youtubePlayers.forEach(({ iframe, overlay }) => {
+    ytCommand(iframe, 'pauseVideo')
+    if (overlay) gsap.to(overlay, { autoAlpha: 1, duration: 0.3, ease: 'power2.out' })
+  })
+}
+
 function initSwipers() {
       document.querySelectorAll("[data-swiper=case-studies]").forEach((swiperTarget) => {
         const swiperNext = document.querySelector("[data-swiper-next=case-studies]");
@@ -2288,6 +2330,9 @@ function initSwipers() {
           },
           mousewheel: {
             forceToAxis: true,
+          },
+          on: {
+            slideChange: pauseAllYoutube,
           },
           a11y: {
             enabled: true,
@@ -3787,6 +3832,7 @@ function initRichQuotations() {
   initCobe();
   initHomeCobe();
   initSwipers();
+  initYoutubePlayer();
   initGlobalParallax();
   initTabSystem();
   initAnimatedBackground();
