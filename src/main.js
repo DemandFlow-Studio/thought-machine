@@ -455,9 +455,10 @@ function initMegaNavDirectionalHover() {
     openScale: 0.35,
     closeScale: 0.25,
   };
-  
+
   const HOVER_ENTER = 120;
   const HOVER_LEAVE = 150;
+  const BACKDROP_GRACE = 80; // CHANGED — grace window so mega→native handoff doesn't flash
 
   // DOM references
   const menuWrap = document.querySelector("[data-menu-wrap]");
@@ -466,14 +467,26 @@ function initMegaNavDirectionalHover() {
   const dropContainer = document.querySelector("[data-dropdown-container]");
   const dropBg = document.querySelector("[data-dropdown-bg]");
   const backdrop = document.querySelector("[data-menu-backdrop]");
-  const toggles = [...document.querySelectorAll("[data-dropdown-toggle]")];
-  const panels = [...document.querySelectorAll("[data-nav-content]")];
   const burger = document.querySelector("[data-burger-toggle]");
   const backBtn = document.querySelector("[data-mobile-back]");
   const logo = document.querySelector("[data-menu-logo]");
   const [lineTop, lineMid, lineBot] = ["top", "mid", "bot"].map(
     (id) => document.querySelector(`[data-burger-line='${id}']`)
   );
+
+  if (!menuWrap || !navList || !dropWrapper || !dropContainer || !backdrop) return;
+
+  // CHANGED — only toggles that are (a) not a Webflow dropdown and (b) have a real panel
+  const toggles = [...document.querySelectorAll("[data-dropdown-toggle]")].filter((el) => {
+    if (el.closest(".w-dropdown")) return false;
+    const name = el.getAttribute("data-dropdown-toggle");
+    return !!name && !!document.querySelector(`[data-nav-content="${name}"]`);
+  });
+
+  // CHANGED — the native Webflow dropdowns are observed, never driven
+  const natives = [...menuWrap.querySelectorAll(".w-dropdown")];
+
+  const panels = [...document.querySelectorAll("[data-nav-content]")];
 
   // State
   const state = {
@@ -485,6 +498,8 @@ function initMegaNavDirectionalHover() {
     mobilePanelActive: null,
     hoverTimer: null,
     leaveTimer: null,
+    backdropTimer: null,   // CHANGED
+    backdropShown: false,  // CHANGED
     tl: null,
     mobileTl: null,
     mobilePanelTl: null,
@@ -492,12 +507,58 @@ function initMegaNavDirectionalHover() {
 
   // Helpers
   const getPanel = (name) => document.querySelector(`[data-nav-content="${name}"]`);
-  const getToggle = (name) => document.querySelector(`[data-dropdown-toggle="${name}"]`);
-  const getFade = (el) => el.querySelectorAll("[data-menu-fade]");
+  const getToggle = (name) => toggles.find((t) => t.getAttribute("data-dropdown-toggle") === name) || null;
+  const getFade = (el) => (el ? el.querySelectorAll("[data-menu-fade]") : []); // CHANGED — null-safe
   const getNavItems = () => navList.querySelectorAll("[data-nav-list-item]");
   const getIndex = (name) => toggles.indexOf(getToggle(name));
   const stagger = (n) => (n <= 1 ? 0 : { amount: DUR.stagger });
-  const isPanelHidden = (name) => !!getToggle(name)?.hasAttribute("data-panel-hidden");
+  const set = (t, vars) => { if (t && (t.length === undefined || t.length)) gsap.set(t, vars); }; // CHANGED — silences empty-NodeList warnings
+
+  // CHANGED — Webflow's dropdown module sometimes never runs (see note). Re-run it if so.
+  function ensureWebflowDropdowns() {
+    const wf = window.Webflow;
+    if (!wf || !wf.require || !natives.length) return;
+    const tog = natives[0].querySelector(".w-dropdown-toggle");
+    if (tog && !tog.id) {
+      try { wf.require("dropdown").ready(); } catch (e) { /* module absent */ }
+    }
+  }
+
+  // CHANGED — one owner for the full-screen dim, shared by both dropdown systems
+  const anyNativeOpen = () => natives.some((d) => d.querySelector(".w-dropdown-list.w--open"));
+
+  function applyBackdrop(show) {
+    if (state.backdropShown === show) return;
+    state.backdropShown = show;
+    gsap.killTweensOf(backdrop);
+    gsap.to(backdrop, {
+      autoAlpha: show ? 1 : 0,
+      duration: show ? DUR.backdropIn : DUR.backdropOut,
+      ease: "power2.out",
+    });
+  }
+
+  function syncNavState() {
+    clearTimeout(state.backdropTimer);
+    const should = !state.isMobile && (state.isOpen || anyNativeOpen());
+    menuWrap.setAttribute("data-menu-open", should ? "true" : "false");
+    if (should) return applyBackdrop(true);
+    // grace window: covers the frame where Solutions closes and a native opens
+    state.backdropTimer = setTimeout(() => {
+      if (!state.isOpen && !anyNativeOpen()) applyBackdrop(false);
+    }, BACKDROP_GRACE);
+  }
+
+  // CHANGED — only used to dismiss a click-opened native (Escape / backdrop click / mega opening)
+  function closeNatives() {
+    natives.forEach((d) => {
+      const list = d.querySelector(".w-dropdown-list");
+      const tog = d.querySelector(".w-dropdown-toggle");
+      if (list && tog && list.classList.contains("w--open")) {
+        tog.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+      }
+    });
+  }
 
   function clearTimers() {
     clearTimeout(state.hoverTimer);
@@ -512,8 +573,8 @@ function initMegaNavDirectionalHover() {
   function killDropdown() {
     killTl("tl");
     gsap.killTweensOf(dropContainer);
-    gsap.killTweensOf(backdrop);
-    panels.forEach((p) => { gsap.killTweensOf(p); gsap.killTweensOf(getFade(p)); });
+    // CHANGED — backdrop deliberately NOT killed here; it has its own lifecycle
+    panels.forEach((p) => { gsap.killTweensOf(p); const f = getFade(p); if (f.length) gsap.killTweensOf(f); });
   }
 
   function killMobile() {
@@ -525,37 +586,42 @@ function initMegaNavDirectionalHover() {
     killTl("mobilePanelTl");
     gsap.killTweensOf(getNavItems());
     gsap.killTweensOf([backBtn, logo]);
-    panels.forEach((p) => { gsap.killTweensOf(p); gsap.killTweensOf(getFade(p)); });
+    panels.forEach((p) => { gsap.killTweensOf(p); const f = getFade(p); if (f.length) gsap.killTweensOf(f); });
   }
 
   function resetToggles() {
     toggles.forEach((t) => t.setAttribute("aria-expanded", "false"));
   }
 
-  function resetDesktop() {
+  // CHANGED — split out so opening doesn't stomp the backdrop
+  function resetPanels() {
     panels.forEach((p) => {
-      gsap.set(p, { visibility:"hidden", opacity:0, pointerEvents:"none", x:0, y:0, xPercent:0 });
-      gsap.set(getFade(p), { autoAlpha:0, x:0, y:0, xPercent:0 });
+      set(p, { visibility: "hidden", opacity: 0, pointerEvents: "none", x: 0, y: 0, xPercent: 0 });
+      set(getFade(p), { autoAlpha: 0, x: 0, y: 0, xPercent: 0 });
     });
-  
-    gsap.set(dropContainer, { height:0, clearProps:"transform" });
-    gsap.set(backdrop, { autoAlpha:0 });
-  
+  }
+
+  function resetDesktop() {
+    resetPanels();
+    set(dropContainer, { height: 0, clearProps: "transform" });
+    set(backdrop, { autoAlpha: 0 });
+    state.backdropShown = false;
     menuWrap.setAttribute("data-menu-open", "false");
     resetToggles();
   }
 
   function setupMobile() {
     panels.forEach((p) => {
-      gsap.set(p, { autoAlpha: 0, xPercent: 0, visibility: "visible", pointerEvents: "none" });
-      gsap.set(getFade(p), { xPercent: 20, autoAlpha: 0 });
+      set(p, { autoAlpha: 0, xPercent: 0, visibility: "visible", pointerEvents: "none" });
+      set(getFade(p), { xPercent: 20, autoAlpha: 0 });
     });
-    gsap.set(getNavItems(), { xPercent: 0, y: 0, autoAlpha: 1 });
-    gsap.set(navList, { autoAlpha: 0, x: 0 });
-    gsap.set(backBtn, { autoAlpha: 0 });
-    gsap.set(logo, { autoAlpha: 1 });
-    gsap.set(dropContainer, { clearProps: "height" });
-    gsap.set(backdrop, { autoAlpha: 0 });
+    set(getNavItems(), { xPercent: 0, y: 0, autoAlpha: 1 });
+    set(navList, { autoAlpha: 0, x: 0 });
+    set(backBtn, { autoAlpha: 0 });
+    set(logo, { autoAlpha: 1 });
+    set(dropContainer, { clearProps: "height" });
+    set(backdrop, { autoAlpha: 0 });
+    state.backdropShown = false;
   }
 
   function measurePanel(name) {
@@ -569,33 +635,36 @@ function initMegaNavDirectionalHover() {
     return h;
   }
 
-  // DESKTOP — open dropdown (first open)
+  // DESKTOP — open dropdown
   function openDropdown(panelName) {
     if (state.isOpen && state.activePanel === panelName) return;
     if (state.isOpen) return switchPanel(state.activePanel, panelName);
 
-    const hidden = isPanelHidden(panelName);
-    const height = hidden ? 0 : measurePanel(panelName);
-    if (!hidden && !height) return;
+    const el = getPanel(panelName);
+    if (!el) return; // CHANGED — was the source of the getFade() TypeError
+
+    const height = measurePanel(panelName);
+    if (!height) return;
+
+    closeNatives(); // CHANGED — dismiss a click-opened Webflow dropdown
 
     killDropdown();
-    resetDesktop();
+    resetPanels();
+    resetToggles();
 
-    const el = getPanel(panelName);
     const fade = getFade(el);
     const toggle = getToggle(panelName);
 
     state.isOpen = true;
     state.activePanel = panelName;
     state.activePanelIndex = getIndex(panelName);
-    menuWrap.setAttribute("data-menu-open", "true");
     if (toggle) toggle.setAttribute("aria-expanded", "true");
+    syncNavState(); // CHANGED — backdrop + data-menu-open handled centrally
 
-    gsap.set(dropContainer, { height: 0 });
+    set(dropContainer, { height: 0 });
 
     const tl = gsap.timeline();
     state.tl = tl;
-    tl.to(backdrop, { autoAlpha: 1, duration: DUR.backdropIn, ease: "power2.out" }, 0);
     tl.to(dropContainer, { height, duration: DUR.openScale, ease: "power3.out" }, 0);
     tl.set(el, { visibility: "visible", opacity: 1, pointerEvents: "auto" }, 0.05);
     if (fade.length) {
@@ -611,47 +680,45 @@ function initMegaNavDirectionalHover() {
   function closeDropdown() {
     if (!state.isOpen) return;
     const el = getPanel(state.activePanel);
-    const fade = el ? getFade(el) : [];
+    const fade = getFade(el);
 
     killDropdown();
 
     const tl = gsap.timeline({
       onComplete() {
-        state.isOpen = false;
-        state.activePanel = null;
-        state.activePanelIndex = -1;
         state.tl = null;
-        resetDesktop();
+        resetPanels();
+        set(dropContainer, { height: 0, clearProps: "transform" });
       },
     });
     state.tl = tl;
     if (fade.length) tl.to(fade, { autoAlpha: 0, y: -4, duration: DUR.contentOut * 0.7, ease: "power2.in" }, 0);
     tl.to(dropContainer, { height: 0, duration: DUR.closeScale, ease: "power2.in" }, 0.05);
-    tl.to(backdrop, { autoAlpha: 0, duration: DUR.backdropOut, ease: "power2.out" }, 0);
     if (el) tl.set(el, { visibility: "hidden", opacity: 0, pointerEvents: "none" });
+
+    // CHANGED — state flips immediately so a native opening in the same tick keeps the dim up
+    state.isOpen = false;
+    state.activePanel = null;
+    state.activePanelIndex = -1;
+    resetToggles();
+    syncNavState();
   }
 
   // DESKTOP — switch panel (directional)
   function switchPanel(fromName, toName) {
-    const dir = getIndex(toName) > getIndex(fromName) ? 1 : -1;
     const fromEl = getPanel(fromName), toEl = getPanel(toName);
     if (!fromEl || !toEl) return;
 
+    const dir = getIndex(toName) > getIndex(fromName) ? 1 : -1;
     const fromFade = getFade(fromEl), toFade = getFade(toEl);
-    const toHidden = isPanelHidden(toName);
-    const toHeight = toHidden ? 0 : measurePanel(toName);
-    if (!toHidden && !toHeight) return;
+    const toHeight = measurePanel(toName);
+    if (!toHeight) return;
 
     killDropdown();
 
-    // Reset all panels, then restore fromEl as visible
-    panels.forEach((p) => {
-      gsap.set(p, { visibility: "hidden", opacity: 0, pointerEvents: "none", xPercent: 0 });
-      gsap.set(getFade(p), { autoAlpha: 0, x: 0, y: 0 });
-    });
-    gsap.set(fromEl, { visibility: "visible", opacity: 1, pointerEvents: "auto", x: 0 });
-    if (fromFade.length) gsap.set(fromFade, { autoAlpha: 1, x: 0, y: 0 });
-    gsap.set(backdrop, { autoAlpha: 1 });
+    resetPanels();
+    set(fromEl, { visibility: "visible", opacity: 1, pointerEvents: "auto", x: 0 });
+    set(fromFade, { autoAlpha: 1, x: 0, y: 0 });
 
     const toToggle = getToggle(toName);
     state.activePanel = toName;
@@ -703,6 +770,20 @@ function initMegaNavDirectionalHover() {
     state.leaveTimer = setTimeout(closeDropdown, HOVER_LEAVE);
   }
 
+  // CHANGED — watch Webflow's own open/close, never drive it
+  const nativeObserver = new MutationObserver(() => {
+    if (state.isMobile) return;
+    if (state.isOpen && anyNativeOpen()) {
+      clearTimers();
+      closeDropdown(); // seamless handoff — backdrop stays up
+    }
+    syncNavState();
+  });
+  natives.forEach((d) => {
+    const list = d.querySelector(".w-dropdown-list");
+    if (list) nativeObserver.observe(list, { attributes: true, attributeFilter: ["class"] });
+  });
+
   // DESKTOP — close behaviors
   function handleEscape(e) {
     if (e.key !== "Escape") return;
@@ -710,6 +791,7 @@ function initMegaNavDirectionalHover() {
       state.mobilePanelActive ? closeMobilePanel() : state.mobileMenuOpen && closeMobileMenu();
       return;
     }
+    if (anyNativeOpen()) closeNatives(); // CHANGED
     if (state.isOpen) {
       const t = getToggle(state.activePanel);
       closeDropdown();
@@ -718,8 +800,15 @@ function initMegaNavDirectionalHover() {
   }
 
   function handleDocClick(e) {
-    if (state.isMobile || !state.isOpen) return;
-    if (!e.target.closest("[data-menu-wrap]")) closeDropdown();
+    if (state.isMobile) return;
+    if (e.target.closest("[data-menu-wrap]")) return;
+    if (state.isOpen) closeDropdown();
+    if (anyNativeOpen()) closeNatives(); // CHANGED
+  }
+
+  function handleBackdropClick() { // CHANGED
+    closeDropdown();
+    closeNatives();
   }
 
   // DESKTOP — keyboard navigation
@@ -762,6 +851,7 @@ function initMegaNavDirectionalHover() {
     if (!el) return;
 
     const links = [...el.querySelectorAll("a")];
+    if (!links.length) return;
     const idx = links.indexOf(document.activeElement);
 
     if (e.key === "ArrowDown") {
@@ -775,8 +865,10 @@ function initMegaNavDirectionalHover() {
     }
     if (e.key === "Tab" && !e.shiftKey && idx === links.length - 1) {
       e.preventDefault();
-      const curIdx = toggles.indexOf(getToggle(state.activePanel));
-      const next = curIdx < toggles.length - 1 ? toggles[curIdx + 1] : null;
+      // CHANGED — hand focus to the next nav item, native dropdowns included
+      const bar = [...menuWrap.querySelectorAll("[data-dropdown-toggle], .w-dropdown-toggle")];
+      const cur = bar.indexOf(getToggle(state.activePanel));
+      const next = cur > -1 && cur < bar.length - 1 ? bar[cur + 1] : null;
       closeDropdown();
       if (next) next.focus();
     }
@@ -831,15 +923,16 @@ function initMegaNavDirectionalHover() {
   function closeMobileMenu() {
     const hadPanel = state.mobilePanelActive;
     const panelEl = hadPanel ? getPanel(hadPanel) : null;
-  
+
     killMobile();
     killMobilePanel();
-  
+    closeNatives(); // CHANGED — don't leave a native dropdown open behind the burger
+
     menuWrap.setAttribute("data-menu-open", "false");
     state.mobileMenuOpen = false;
     state.mobilePanelActive = null;
     burger.setAttribute("aria-expanded", "false");
-  
+
     const tl = gsap.timeline({
       onComplete() {
         document.body.style.overflow = "";
@@ -848,20 +941,18 @@ function initMegaNavDirectionalHover() {
       },
     });
     state.mobileTl = tl;
-  
+
     tl.add(animateBurger(false), 0);
-  
-    // If a panel was open, fade it out with the close — no snap reset
+
     if (hadPanel && panelEl) {
       tl.to(panelEl, { autoAlpha: 0, duration: 0.3, ease: "power2.inOut" }, 0.05);
       tl.to(backBtn, { autoAlpha: 0, duration: 0.2, ease: "power2.in" }, 0.05);
     }
-  
-    // Fade out the nav list container
+
     tl.to(navList, { autoAlpha: 0, duration: 0.3, ease: "power2.inOut" }, 0.05);
   }
 
-  // MOBILE — slide-over panels 
+  // MOBILE — slide-over panels
   function openMobilePanel(panelName) {
     const el = getPanel(panelName);
     if (!el) return;
@@ -874,19 +965,13 @@ function initMegaNavDirectionalHover() {
     const tl = gsap.timeline();
     state.mobilePanelTl = tl;
 
-    // Fade out each nav item to the left
     if (navItems.length) {
-      tl.to(navItems, {
-        xPercent: -10, autoAlpha: 0,
-        duration: 0.35, stagger: 0.03, ease: "power2.in",
-      }, 0);
+      tl.to(navItems, { xPercent: -10, autoAlpha: 0, duration: 0.35, stagger: 0.03, ease: "power2.in" }, 0);
     }
 
-    // Logo → back button swap
     tl.to(logo, { autoAlpha: 0, duration: 0.2, ease: "power2.in" }, 0);
     tl.to(backBtn, { autoAlpha: 1, duration: 0.25, ease: "power2.inOut" }, 0.15);
 
-    // Show panel container, then fade in its items from the right
     tl.set(el, { autoAlpha: 1, xPercent: 0, pointerEvents: "auto" }, 0.2);
     if (panelFade.length) {
       tl.fromTo(panelFade,
@@ -911,22 +996,14 @@ function initMegaNavDirectionalHover() {
     });
     state.mobilePanelTl = tl;
 
-    // Fade out panel items to the right
     if (panelFade.length) {
-      tl.to(el, {
-        xPercent: 20, autoAlpha: 0,
-        duration: 0.3, stagger: 0.02, ease: "power2.in",
-      }, 0);
+      tl.to(el, { xPercent: 20, autoAlpha: 0, duration: 0.3, stagger: 0.02, ease: "power2.in" }, 0);
     }
-
-    // Hide panel
     tl.set(el, { autoAlpha: 0, pointerEvents: "none" }, 0.25);
 
-    // Back → logo swap
     tl.to(backBtn, { autoAlpha: 0, duration: 0.2, ease: "power2.in" }, 0);
     tl.to(logo, { autoAlpha: 1, duration: 0.25, ease: "power2.out" }, 0.15);
 
-    // Fade nav items back in from center
     if (navItems.length) {
       tl.fromTo(navItems,
         { xPercent: -20, autoAlpha: 0 },
@@ -938,8 +1015,6 @@ function initMegaNavDirectionalHover() {
 
   function handleToggleClick(e) {
     if (!state.isMobile || !state.mobileMenuOpen) return;
-    // On phones (<768px) the dropdowns are native Webflow dropdowns — don't hijack
-    // the click with the custom slide-in panel. Tablet (768–991) keeps the panels.
     if (window.innerWidth < 768) return;
     const name = e.currentTarget.getAttribute("data-dropdown-toggle");
     if (name) { e.preventDefault(); openMobilePanel(name); }
@@ -959,33 +1034,30 @@ function initMegaNavDirectionalHover() {
 
       if (was && !state.isMobile) {
         killMobile(); killMobilePanel();
-        gsap.set(navList, { clearProps: "all" });
-        gsap.set(getNavItems(), { clearProps: "all" });
-        gsap.set(backBtn, { autoAlpha: 0 });
-        gsap.set(logo, { clearProps: "all" });
-        gsap.set([lineTop, lineMid, lineBot], { rotation: 0, y: 0, autoAlpha: 1 });
-      
-        panels.forEach((p) => {
-          gsap.set(p, { clearProps: "all" });
-          gsap.set(getFade(p), { clearProps: "all" });
-        });
-      
+        set(navList, { clearProps: "all" });
+        set(getNavItems(), { clearProps: "all" });
+        set(backBtn, { autoAlpha: 0 });
+        set(logo, { clearProps: "all" });
+        set([lineTop, lineMid, lineBot], { rotation: 0, y: 0, autoAlpha: 1 });
+
+        panels.forEach((p) => { set(p, { clearProps: "all" }); set(getFade(p), { clearProps: "all" }); });
+
         burger.setAttribute("aria-expanded", "false");
         state.mobileMenuOpen = false;
         state.mobilePanelActive = null;
         document.body.style.overflow = "";
         resetDesktop();
       }
-      
+
       if (!was && state.isMobile) {
         killDropdown();
         state.isOpen = false; state.activePanel = null; state.activePanelIndex = -1;
         clearTimers();
-        menuWrap.setAttribute("data-menu-open", "false");
+        clearTimeout(state.backdropTimer);
         resetToggles();
         setupMobile();
+        menuWrap.setAttribute("data-menu-open", "false");
       }
-      
     }, 150);
   }
 
@@ -996,26 +1068,599 @@ function initMegaNavDirectionalHover() {
     btn.addEventListener("keydown", handleKeydownOnToggle);
     btn.addEventListener("click", handleToggleClick);
   });
-  
+
   dropWrapper.addEventListener("mouseenter", handleWrapperEnter);
   dropWrapper.addEventListener("mouseleave", handleWrapperLeave);
-  
+
   panels.forEach((p) => p.addEventListener("keydown", handleKeydownInPanel));
-  
-  backdrop.addEventListener("click", closeDropdown);
-  
+
+  backdrop.addEventListener("click", handleBackdropClick);
+
   document.addEventListener("keydown", handleEscape);
   document.addEventListener("click", handleDocClick);
-  
+
   burger.addEventListener("click", () => state.mobileMenuOpen ? closeMobileMenu() : openMobileMenu());
-  
   backBtn.addEventListener("click", closeMobilePanel);
-  
   window.addEventListener("resize", handleResize);
 
   // INIT
+  ensureWebflowDropdowns();                                   // CHANGED
+  window.addEventListener("load", ensureWebflowDropdowns);    // CHANGED — second chance after async scripts
   state.isMobile ? setupMobile() : resetDesktop();
 }
+
+// function initMegaNavDirectionalHover() {
+//   const DUR = {
+//     bgMorph: 0.4,
+//     contentIn: 0.3,
+//     contentOut: 0.2,
+//     stagger: 0.25,
+//     backdropIn: 0.3,
+//     backdropOut: 0.2,
+//     openScale: 0.35,
+//     closeScale: 0.25,
+//   };
+  
+//   const HOVER_ENTER = 120;
+//   const HOVER_LEAVE = 150;
+
+//   // DOM references
+//   const menuWrap = document.querySelector("[data-menu-wrap]");
+//   const navList = document.querySelector("[data-nav-list]");
+//   const dropWrapper = document.querySelector("[data-dropdown-wrapper]");
+//   const dropContainer = document.querySelector("[data-dropdown-container]");
+//   const dropBg = document.querySelector("[data-dropdown-bg]");
+//   const backdrop = document.querySelector("[data-menu-backdrop]");
+//   const toggles = [...document.querySelectorAll("[data-dropdown-toggle]")];
+//   const panels = [...document.querySelectorAll("[data-nav-content]")];
+//   const burger = document.querySelector("[data-burger-toggle]");
+//   const backBtn = document.querySelector("[data-mobile-back]");
+//   const logo = document.querySelector("[data-menu-logo]");
+//   const [lineTop, lineMid, lineBot] = ["top", "mid", "bot"].map(
+//     (id) => document.querySelector(`[data-burger-line='${id}']`)
+//   );
+
+//   // State
+//   const state = {
+//     isOpen: false,
+//     activePanel: null,
+//     activePanelIndex: -1,
+//     isMobile: window.innerWidth <= 991,
+//     mobileMenuOpen: false,
+//     mobilePanelActive: null,
+//     hoverTimer: null,
+//     leaveTimer: null,
+//     tl: null,
+//     mobileTl: null,
+//     mobilePanelTl: null,
+//   };
+
+//   // Helpers
+//   const getPanel = (name) => document.querySelector(`[data-nav-content="${name}"]`);
+//   const getToggle = (name) => document.querySelector(`[data-dropdown-toggle="${name}"]`);
+//   const getFade = (el) => el.querySelectorAll("[data-menu-fade]");
+//   const getNavItems = () => navList.querySelectorAll("[data-nav-list-item]");
+//   const getIndex = (name) => toggles.indexOf(getToggle(name));
+//   const stagger = (n) => (n <= 1 ? 0 : { amount: DUR.stagger });
+//   const isPanelHidden = (name) => !!getToggle(name)?.hasAttribute("data-panel-hidden");
+
+//   function clearTimers() {
+//     clearTimeout(state.hoverTimer);
+//     clearTimeout(state.leaveTimer);
+//     state.hoverTimer = state.leaveTimer = null;
+//   }
+
+//   function killTl(key) {
+//     if (state[key]) { state[key].kill(); state[key] = null; }
+//   }
+
+//   function killDropdown() {
+//     killTl("tl");
+//     gsap.killTweensOf(dropContainer);
+//     gsap.killTweensOf(backdrop);
+//     panels.forEach((p) => { gsap.killTweensOf(p); gsap.killTweensOf(getFade(p)); });
+//   }
+
+//   function killMobile() {
+//     killTl("mobileTl");
+//     gsap.killTweensOf([navList, lineTop, lineMid, lineBot]);
+//   }
+
+//   function killMobilePanel() {
+//     killTl("mobilePanelTl");
+//     gsap.killTweensOf(getNavItems());
+//     gsap.killTweensOf([backBtn, logo]);
+//     panels.forEach((p) => { gsap.killTweensOf(p); gsap.killTweensOf(getFade(p)); });
+//   }
+
+//   function resetToggles() {
+//     toggles.forEach((t) => t.setAttribute("aria-expanded", "false"));
+//   }
+
+//   function resetDesktop() {
+//     panels.forEach((p) => {
+//       gsap.set(p, { visibility:"hidden", opacity:0, pointerEvents:"none", x:0, y:0, xPercent:0 });
+//       gsap.set(getFade(p), { autoAlpha:0, x:0, y:0, xPercent:0 });
+//     });
+  
+//     gsap.set(dropContainer, { height:0, clearProps:"transform" });
+//     gsap.set(backdrop, { autoAlpha:0 });
+  
+//     menuWrap.setAttribute("data-menu-open", "false");
+//     resetToggles();
+//   }
+
+//   function setupMobile() {
+//     panels.forEach((p) => {
+//       gsap.set(p, { autoAlpha: 0, xPercent: 0, visibility: "visible", pointerEvents: "none" });
+//       gsap.set(getFade(p), { xPercent: 20, autoAlpha: 0 });
+//     });
+//     gsap.set(getNavItems(), { xPercent: 0, y: 0, autoAlpha: 1 });
+//     gsap.set(navList, { autoAlpha: 0, x: 0 });
+//     gsap.set(backBtn, { autoAlpha: 0 });
+//     gsap.set(logo, { autoAlpha: 1 });
+//     gsap.set(dropContainer, { clearProps: "height" });
+//     gsap.set(backdrop, { autoAlpha: 0 });
+//   }
+
+//   function measurePanel(name) {
+//     const el = getPanel(name);
+//     if (!el) return 0;
+//     const s = el.style;
+//     const prev = [s.visibility, s.opacity, s.pointerEvents];
+//     Object.assign(s, { visibility: "visible", opacity: "0", pointerEvents: "none" });
+//     const h = el.getBoundingClientRect().height;
+//     [s.visibility, s.opacity, s.pointerEvents] = prev;
+//     return h;
+//   }
+
+//   // DESKTOP — open dropdown (first open)
+//   function openDropdown(panelName) {
+//     if (state.isOpen && state.activePanel === panelName) return;
+//     if (state.isOpen) return switchPanel(state.activePanel, panelName);
+
+//     const hidden = isPanelHidden(panelName);
+//     const height = hidden ? 0 : measurePanel(panelName);
+//     if (!hidden && !height) return;
+
+//     killDropdown();
+//     resetDesktop();
+
+//     const el = getPanel(panelName);
+//     const fade = getFade(el);
+//     const toggle = getToggle(panelName);
+
+//     state.isOpen = true;
+//     state.activePanel = panelName;
+//     state.activePanelIndex = getIndex(panelName);
+//     menuWrap.setAttribute("data-menu-open", "true");
+//     if (toggle) toggle.setAttribute("aria-expanded", "true");
+
+//     gsap.set(dropContainer, { height: 0 });
+
+//     const tl = gsap.timeline();
+//     state.tl = tl;
+//     tl.to(backdrop, { autoAlpha: 1, duration: DUR.backdropIn, ease: "power2.out" }, 0);
+//     tl.to(dropContainer, { height, duration: DUR.openScale, ease: "power3.out" }, 0);
+//     tl.set(el, { visibility: "visible", opacity: 1, pointerEvents: "auto" }, 0.05);
+//     if (fade.length) {
+//       tl.fromTo(fade,
+//         { autoAlpha: 0, y: 8 },
+//         { autoAlpha: 1, y: 0, duration: DUR.contentIn, stagger: stagger(fade.length), ease: "power3.out" },
+//         0.1
+//       );
+//     }
+//   }
+
+//   // DESKTOP — close dropdown
+//   function closeDropdown() {
+//     if (!state.isOpen) return;
+//     const el = getPanel(state.activePanel);
+//     const fade = el ? getFade(el) : [];
+
+//     killDropdown();
+
+//     const tl = gsap.timeline({
+//       onComplete() {
+//         state.isOpen = false;
+//         state.activePanel = null;
+//         state.activePanelIndex = -1;
+//         state.tl = null;
+//         resetDesktop();
+//       },
+//     });
+//     state.tl = tl;
+//     if (fade.length) tl.to(fade, { autoAlpha: 0, y: -4, duration: DUR.contentOut * 0.7, ease: "power2.in" }, 0);
+//     tl.to(dropContainer, { height: 0, duration: DUR.closeScale, ease: "power2.in" }, 0.05);
+//     tl.to(backdrop, { autoAlpha: 0, duration: DUR.backdropOut, ease: "power2.out" }, 0);
+//     if (el) tl.set(el, { visibility: "hidden", opacity: 0, pointerEvents: "none" });
+//   }
+
+//   // DESKTOP — switch panel (directional)
+//   function switchPanel(fromName, toName) {
+//     const dir = getIndex(toName) > getIndex(fromName) ? 1 : -1;
+//     const fromEl = getPanel(fromName), toEl = getPanel(toName);
+//     if (!fromEl || !toEl) return;
+
+//     const fromFade = getFade(fromEl), toFade = getFade(toEl);
+//     const toHidden = isPanelHidden(toName);
+//     const toHeight = toHidden ? 0 : measurePanel(toName);
+//     if (!toHidden && !toHeight) return;
+
+//     killDropdown();
+
+//     // Reset all panels, then restore fromEl as visible
+//     panels.forEach((p) => {
+//       gsap.set(p, { visibility: "hidden", opacity: 0, pointerEvents: "none", xPercent: 0 });
+//       gsap.set(getFade(p), { autoAlpha: 0, x: 0, y: 0 });
+//     });
+//     gsap.set(fromEl, { visibility: "visible", opacity: 1, pointerEvents: "auto", x: 0 });
+//     if (fromFade.length) gsap.set(fromFade, { autoAlpha: 1, x: 0, y: 0 });
+//     gsap.set(backdrop, { autoAlpha: 1 });
+
+//     const toToggle = getToggle(toName);
+//     state.activePanel = toName;
+//     state.activePanelIndex = getIndex(toName);
+//     resetToggles();
+//     if (toToggle) toToggle.setAttribute("aria-expanded", "true");
+
+//     const xOut = dir * -30, xIn = dir * 30;
+//     const tl = gsap.timeline();
+//     state.tl = tl;
+
+//     if (fromFade.length) tl.to(fromFade, { autoAlpha: 0, x: xOut, duration: DUR.contentOut, ease: "power2.in" }, 0);
+//     tl.set(fromEl, { visibility: "hidden", opacity: 0, pointerEvents: "none", xPercent: 0 }, DUR.contentOut);
+//     if (fromFade.length) tl.set(fromFade, { x: 0 }, DUR.contentOut);
+//     tl.to(dropContainer, { height: toHeight, duration: DUR.bgMorph, ease: "power3.out" }, 0.05);
+//     tl.set(toEl, { visibility: "visible", opacity: 1, pointerEvents: "auto", xPercent: 0 }, DUR.contentOut * 0.5);
+//     if (toFade.length) {
+//       tl.fromTo(toFade,
+//         { autoAlpha: 0, x: xIn },
+//         { autoAlpha: 1, x: 0, duration: DUR.contentIn, stagger: stagger(toFade.length), ease: "power3.out" },
+//         DUR.contentOut * 0.6
+//       );
+//     }
+//   }
+
+//   // DESKTOP — hover intent
+//   function handleToggleEnter(e) {
+//     if (state.isMobile) return;
+//     const name = e.currentTarget.getAttribute("data-dropdown-toggle");
+//     if (!name) return;
+//     clearTimeout(state.leaveTimer); state.leaveTimer = null;
+//     clearTimeout(state.hoverTimer);
+//     state.hoverTimer = setTimeout(() => openDropdown(name), state.isOpen ? 0 : HOVER_ENTER);
+//   }
+
+//   function handleToggleLeave() {
+//     if (state.isMobile) return;
+//     clearTimeout(state.hoverTimer); state.hoverTimer = null;
+//     state.leaveTimer = setTimeout(closeDropdown, HOVER_LEAVE);
+//   }
+
+//   function handleWrapperEnter() {
+//     if (state.isMobile) return;
+//     clearTimeout(state.leaveTimer); state.leaveTimer = null;
+//   }
+
+//   function handleWrapperLeave() {
+//     if (state.isMobile) return;
+//     state.leaveTimer = setTimeout(closeDropdown, HOVER_LEAVE);
+//   }
+
+//   // DESKTOP — close behaviors
+//   function handleEscape(e) {
+//     if (e.key !== "Escape") return;
+//     if (state.isMobile) {
+//       state.mobilePanelActive ? closeMobilePanel() : state.mobileMenuOpen && closeMobileMenu();
+//       return;
+//     }
+//     if (state.isOpen) {
+//       const t = getToggle(state.activePanel);
+//       closeDropdown();
+//       if (t) t.focus();
+//     }
+//   }
+
+//   function handleDocClick(e) {
+//     if (state.isMobile || !state.isOpen) return;
+//     if (!e.target.closest("[data-menu-wrap]")) closeDropdown();
+//   }
+
+//   // DESKTOP — keyboard navigation
+//   function focusFirstLink(panelName) {
+//     setTimeout(() => {
+//       const el = getPanel(panelName);
+//       if (!el) return;
+//       const link = el.querySelector("a");
+//       if (!link) return;
+//       gsap.set(link, { visibility: "visible" });
+//       link.focus();
+//     }, 80);
+//   }
+
+//   function handleKeydownOnToggle(e) {
+//     if (state.isMobile) return;
+//     const name = e.currentTarget.getAttribute("data-dropdown-toggle");
+
+//     if (e.key === "Enter" || e.key === " ") {
+//       e.preventDefault();
+//       if (state.isOpen && state.activePanel === name) closeDropdown();
+//       else { openDropdown(name); focusFirstLink(name); }
+//       return;
+//     }
+//     if (e.key === "ArrowDown") {
+//       e.preventDefault();
+//       if (!state.isOpen || state.activePanel !== name) openDropdown(name);
+//       focusFirstLink(name);
+//     }
+//     if (e.key === "Tab" && !e.shiftKey && state.isOpen && state.activePanel === name) {
+//       e.preventDefault();
+//       const link = getPanel(name)?.querySelector("a");
+//       if (link) link.focus();
+//     }
+//   }
+
+//   function handleKeydownInPanel(e) {
+//     if (state.isMobile || !state.isOpen) return;
+//     const el = getPanel(state.activePanel);
+//     if (!el) return;
+
+//     const links = [...el.querySelectorAll("a")];
+//     const idx = links.indexOf(document.activeElement);
+
+//     if (e.key === "ArrowDown") {
+//       e.preventDefault();
+//       links[(idx + 1) % links.length].focus();
+//     }
+//     if (e.key === "ArrowUp") {
+//       e.preventDefault();
+//       if (idx <= 0) { const t = getToggle(state.activePanel); if (t) t.focus(); }
+//       else links[idx - 1].focus();
+//     }
+//     if (e.key === "Tab" && !e.shiftKey && idx === links.length - 1) {
+//       e.preventDefault();
+//       const curIdx = toggles.indexOf(getToggle(state.activePanel));
+//       const next = curIdx < toggles.length - 1 ? toggles[curIdx + 1] : null;
+//       closeDropdown();
+//       if (next) next.focus();
+//     }
+//     if (e.key === "Tab" && e.shiftKey && idx === 0) {
+//       e.preventDefault();
+//       const t = getToggle(state.activePanel);
+//       if (t) t.focus();
+//     }
+//   }
+
+//   // MOBILE — burger animation
+//   function animateBurger(toX) {
+//     const tl = gsap.timeline({ defaults: { ease: "power2.inOut" } });
+//     if (toX) {
+//       tl.to(lineTop, { y: "0.375em", duration: 0.15 }, 0);
+//       tl.to(lineBot, { y: "-0.375em", duration: 0.15 }, 0);
+//       tl.to(lineMid, { autoAlpha: 0, duration: 0.1 }, 0.1);
+//       tl.to(lineTop, { rotation: 45, duration: 0.2 }, 0.15);
+//       tl.to(lineBot, { rotation: -45, duration: 0.2 }, 0.15);
+//     } else {
+//       tl.to(lineTop, { rotation: 0, duration: 0.2 }, 0);
+//       tl.to(lineBot, { rotation: 0, duration: 0.2 }, 0);
+//       tl.to(lineTop, { y: 0, duration: 0.15 }, 0.15);
+//       tl.to(lineBot, { y: 0, duration: 0.15 }, 0.15);
+//       tl.to(lineMid, { autoAlpha: 1, duration: 0.1 }, 0.15);
+//     }
+//     return tl;
+//   }
+
+//   // MOBILE — open/close menu
+//   function openMobileMenu() {
+//     killMobile();
+//     state.mobileMenuOpen = true;
+//     menuWrap.setAttribute("data-menu-open", "true");
+//     burger.setAttribute("aria-expanded", "true");
+//     document.body.style.overflow = "hidden";
+
+//     const items = getNavItems();
+//     const tl = gsap.timeline();
+//     state.mobileTl = tl;
+//     tl.add(animateBurger(true), 0);
+//     tl.to(navList, { autoAlpha: 1, duration: 0.3, ease: "power2.out" }, 0);
+//     if (items.length) {
+//       tl.fromTo(items,
+//         { autoAlpha: 0, y: 12 },
+//         { autoAlpha: 1, y: 0, duration: 0.3, stagger: 0.04, ease: "power3.out" },
+//         0.15
+//       );
+//     }
+//   }
+
+//   function closeMobileMenu() {
+//     const hadPanel = state.mobilePanelActive;
+//     const panelEl = hadPanel ? getPanel(hadPanel) : null;
+  
+//     killMobile();
+//     killMobilePanel();
+  
+//     menuWrap.setAttribute("data-menu-open", "false");
+//     state.mobileMenuOpen = false;
+//     state.mobilePanelActive = null;
+//     burger.setAttribute("aria-expanded", "false");
+  
+//     const tl = gsap.timeline({
+//       onComplete() {
+//         document.body.style.overflow = "";
+//         state.mobileTl = null;
+//         setupMobile();
+//       },
+//     });
+//     state.mobileTl = tl;
+  
+//     tl.add(animateBurger(false), 0);
+  
+//     // If a panel was open, fade it out with the close — no snap reset
+//     if (hadPanel && panelEl) {
+//       tl.to(panelEl, { autoAlpha: 0, duration: 0.3, ease: "power2.inOut" }, 0.05);
+//       tl.to(backBtn, { autoAlpha: 0, duration: 0.2, ease: "power2.in" }, 0.05);
+//     }
+  
+//     // Fade out the nav list container
+//     tl.to(navList, { autoAlpha: 0, duration: 0.3, ease: "power2.inOut" }, 0.05);
+//   }
+
+//   // MOBILE — slide-over panels 
+//   function openMobilePanel(panelName) {
+//     const el = getPanel(panelName);
+//     if (!el) return;
+//     killMobilePanel();
+//     state.mobilePanelActive = panelName;
+
+//     const navItems = getNavItems();
+//     const panelFade = getFade(el);
+
+//     const tl = gsap.timeline();
+//     state.mobilePanelTl = tl;
+
+//     // Fade out each nav item to the left
+//     if (navItems.length) {
+//       tl.to(navItems, {
+//         xPercent: -10, autoAlpha: 0,
+//         duration: 0.35, stagger: 0.03, ease: "power2.in",
+//       }, 0);
+//     }
+
+//     // Logo → back button swap
+//     tl.to(logo, { autoAlpha: 0, duration: 0.2, ease: "power2.in" }, 0);
+//     tl.to(backBtn, { autoAlpha: 1, duration: 0.25, ease: "power2.inOut" }, 0.15);
+
+//     // Show panel container, then fade in its items from the right
+//     tl.set(el, { autoAlpha: 1, xPercent: 0, pointerEvents: "auto" }, 0.2);
+//     if (panelFade.length) {
+//       tl.fromTo(panelFade,
+//         { xPercent: 8, autoAlpha: 0 },
+//         { xPercent: 0, autoAlpha: 1, duration: 0.3, stagger: stagger(panelFade.length), ease: "power3.out" },
+//         0.25
+//       );
+//     }
+//   }
+
+//   function closeMobilePanel() {
+//     if (!state.mobilePanelActive) return;
+//     const el = getPanel(state.mobilePanelActive);
+//     if (!el) return;
+//     killMobilePanel();
+
+//     const navItems = getNavItems();
+//     const panelFade = getFade(el);
+
+//     const tl = gsap.timeline({
+//       onComplete() { state.mobilePanelActive = null; state.mobilePanelTl = null; },
+//     });
+//     state.mobilePanelTl = tl;
+
+//     // Fade out panel items to the right
+//     if (panelFade.length) {
+//       tl.to(el, {
+//         xPercent: 20, autoAlpha: 0,
+//         duration: 0.3, stagger: 0.02, ease: "power2.in",
+//       }, 0);
+//     }
+
+//     // Hide panel
+//     tl.set(el, { autoAlpha: 0, pointerEvents: "none" }, 0.25);
+
+//     // Back → logo swap
+//     tl.to(backBtn, { autoAlpha: 0, duration: 0.2, ease: "power2.in" }, 0);
+//     tl.to(logo, { autoAlpha: 1, duration: 0.25, ease: "power2.out" }, 0.15);
+
+//     // Fade nav items back in from center
+//     if (navItems.length) {
+//       tl.fromTo(navItems,
+//         { xPercent: -20, autoAlpha: 0 },
+//         { xPercent: 0, autoAlpha: 1, duration: 0.35, stagger: 0.03, ease: "power3.out" },
+//         0.25
+//       );
+//     }
+//   }
+
+//   function handleToggleClick(e) {
+//     if (!state.isMobile || !state.mobileMenuOpen) return;
+//     // On phones (<768px) the dropdowns are native Webflow dropdowns — don't hijack
+//     // the click with the custom slide-in panel. Tablet (768–991) keeps the panels.
+//     if (window.innerWidth < 768) return;
+//     const name = e.currentTarget.getAttribute("data-dropdown-toggle");
+//     if (name) { e.preventDefault(); openMobilePanel(name); }
+//   }
+
+//   // RESIZE
+//   let resizeTimer = null;
+//   let lastWidth = window.innerWidth;
+//   function handleResize() {
+//     const w = window.innerWidth;
+//     if (w === lastWidth) return;
+//     lastWidth = w;
+//     clearTimeout(resizeTimer);
+//     resizeTimer = setTimeout(() => {
+//       const was = state.isMobile;
+//       state.isMobile = window.innerWidth <= 991;
+
+//       if (was && !state.isMobile) {
+//         killMobile(); killMobilePanel();
+//         gsap.set(navList, { clearProps: "all" });
+//         gsap.set(getNavItems(), { clearProps: "all" });
+//         gsap.set(backBtn, { autoAlpha: 0 });
+//         gsap.set(logo, { clearProps: "all" });
+//         gsap.set([lineTop, lineMid, lineBot], { rotation: 0, y: 0, autoAlpha: 1 });
+      
+//         panels.forEach((p) => {
+//           gsap.set(p, { clearProps: "all" });
+//           gsap.set(getFade(p), { clearProps: "all" });
+//         });
+      
+//         burger.setAttribute("aria-expanded", "false");
+//         state.mobileMenuOpen = false;
+//         state.mobilePanelActive = null;
+//         document.body.style.overflow = "";
+//         resetDesktop();
+//       }
+      
+//       if (!was && state.isMobile) {
+//         killDropdown();
+//         state.isOpen = false; state.activePanel = null; state.activePanelIndex = -1;
+//         clearTimers();
+//         menuWrap.setAttribute("data-menu-open", "false");
+//         resetToggles();
+//         setupMobile();
+//       }
+      
+//     }, 150);
+//   }
+
+//   // EVENT BINDING
+//   toggles.forEach((btn) => {
+//     btn.addEventListener("mouseenter", handleToggleEnter);
+//     btn.addEventListener("mouseleave", handleToggleLeave);
+//     btn.addEventListener("keydown", handleKeydownOnToggle);
+//     btn.addEventListener("click", handleToggleClick);
+//   });
+  
+//   dropWrapper.addEventListener("mouseenter", handleWrapperEnter);
+//   dropWrapper.addEventListener("mouseleave", handleWrapperLeave);
+  
+//   panels.forEach((p) => p.addEventListener("keydown", handleKeydownInPanel));
+  
+//   backdrop.addEventListener("click", closeDropdown);
+  
+//   document.addEventListener("keydown", handleEscape);
+//   document.addEventListener("click", handleDocClick);
+  
+//   burger.addEventListener("click", () => state.mobileMenuOpen ? closeMobileMenu() : openMobileMenu());
+  
+//   backBtn.addEventListener("click", closeMobilePanel);
+  
+//   window.addEventListener("resize", handleResize);
+
+//   // INIT
+//   state.isMobile ? setupMobile() : resetDesktop();
+// }
 
 
 // --- Globe geometry (pure math) ----------------------------------------------
@@ -2311,9 +2956,23 @@ function initSwipers() {
       })
 
       const swiperCaseStudiesCarousel = document.querySelectorAll("[data-swiper=case-studies-carousel]");
+              const swiperNext = document.querySelector("[data-swiper-next=case-studies-carousel]");
+        const swiperPrev = document.querySelector("[data-swiper-prev=case-studies-carousel]");
+
+      
       swiperCaseStudiesCarousel.forEach((swiperEl) => {
+        // Swiper 9+ loops by rearranging real slides, so it needs slidesPerView * 2 + buffer
+        // of them. The CMS list is capped at 4, so clone up to the minimum before init.
+        const track = swiperEl.querySelector(".swiper-wrapper")
+        const originals = track ? [...track.children] : []
+        if (originals.length && originals.length < 6) {
+          while (track.children.length < 6) {
+            track.appendChild(originals[track.children.length % originals.length].cloneNode(true))
+          }
+        }
+
         const swiper = new Swiper(swiperEl, {
-          modules: [Keyboard, Mousewheel],
+          modules: [Keyboard, Mousewheel, Navigation],
           speed: 600,
           spaceBetween: 0,
           slidesPerView: 1.25,
@@ -2327,6 +2986,11 @@ function initSwipers() {
           },
           keyboard: {
             enabled: true,
+          },
+                    navigation: {
+            nextEl: swiperNext,
+            prevEl: swiperPrev,
+            disabledClass: "is-disabled",
           },
           mousewheel: {
             forceToAxis: true,
