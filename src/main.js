@@ -2963,13 +2963,13 @@ function initSwipers() {
       swiperCaseStudiesCarousel.forEach((swiperEl) => {
         // Swiper 9+ loops by rearranging real slides, so it needs slidesPerView * 2 + buffer
         // of them. The CMS list is capped at 4, so clone up to the minimum before init.
-        const track = swiperEl.querySelector(".swiper-wrapper")
-        const originals = track ? [...track.children] : []
-        if (originals.length && originals.length < 6) {
-          while (track.children.length < 6) {
-            track.appendChild(originals[track.children.length % originals.length].cloneNode(true))
-          }
-        }
+        // const track = swiperEl.querySelector(".swiper-wrapper")
+        // const originals = track ? [...track.children] : []
+        // if (originals.length && originals.length < 6) {
+        //   while (track.children.length < 6) {
+        //     track.appendChild(originals[track.children.length % originals.length].cloneNode(true))
+        //   }
+        // }
 
         const swiper = new Swiper(swiperEl, {
           modules: [Keyboard, Mousewheel, Navigation],
