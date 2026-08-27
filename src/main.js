@@ -4484,6 +4484,20 @@ function initRichQuotations() {
   });
 }
 
+function initScrollTriggerRefreshers() {
+  const targets = document.querySelectorAll("[data-scrolltrigger-refresh]")
+
+  targets.forEach((target) => {
+    const delay = parseFloat(target.getAttribute("data-scrolltrigger-refresh"));
+    target.addEventListener("click", function() {
+            gsap.delayedCall(delay, () => {
+        ScrollTrigger.refresh();
+      });
+    })
+  })
+}
+
+
  function init() {
   // visual, font-independent — run immediately
   initButton046();
@@ -4492,6 +4506,7 @@ function initRichQuotations() {
   initNumberOdometer();
   initMouseMove();
   initMarqueeScrollDirection();
+  initScrollTriggerRefreshers();
   // initLenis();
   initCobe();
   initHomeCobe();
