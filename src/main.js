@@ -2092,7 +2092,7 @@ const HERO_ROUTES = [
   [['vancouver',     49.28, -123.12], ['santiago',    -33.45,  -70.67]],
   [['nairobi',       -1.29,   36.82], ['istanbul',     41.01,   28.98]],
   [['mexico-city',   19.43,  -99.13], ['madrid',       40.42,   -3.70]],
-  [['shanghai',      31.23,  121.47], ['auckland',    -36.85,  174.76]],
+  [['hong-kong',     22.32,  114.17], ['auckland',    -36.85,  174.76]],
 ];
 
 // Turns the route table into the two shapes the rest of the hero wants: a flat
